@@ -382,9 +382,7 @@ async function loadCandleChart(){
  if(!bars.length)throw Error('OHLCV response had no valid candles');
  if(chartToken!==addr)return;
  chartBars=bars;chartLastFetch=Date.now();drawCandles(bars);el('chartFeedStatus').textContent='Candles loaded';
- chartMessage(t.symbol+' · '+bars.length+' reported candles · latest close 
-</body>
-</html>+bars[bars.length-1][4].toPrecision(7)+' · fetched '+timeText(chartLastFetch)+' · candle feed may lag live trading.');
+ chartMessage(t.symbol+' · '+bars.length+' reported candles · latest close $'+bars[bars.length-1][4].toPrecision(7)+' · fetched '+timeText(chartLastFetch)+' · candle feed may lag live trading.');
  }catch(e){if(chartToken===addr){chartBars=[];drawCandles([]);el('chartFeedStatus').textContent='Chart unavailable';chartMessage('Unable to load live OHLCV ('+String(e.message||e)+'). Use View full chart ↗ for the external source. No invented candles shown.')}}finally{chartLoading=false;el('chartRefresh').disabled=false}
 }
 function replyToMarketQuestion(q){
@@ -394,9 +392,7 @@ function replyToMarketQuestion(q){
  return 'Virtual equity '+money(currentEquity())+'; available cash '+money(account.cash)+'; open '+amount+'/'+account.auto.maxPositions+'; net account P&L '+money(currentEquity()-100)+'. '+(txt?'Positions: '+txt+'. ':'No open virtual positions. ')+'Estimates use last available prices and assumed fees.'}
  if(/(auto|manual|stop|start|on|off)/.test(p)&&/(mode|trading|auto|bot)/.test(p)){return 'AUTO '+(account.auto.enabled?'ON':'OFF')+'. Maximum '+account.auto.maxPositions+' paper positions. '+(account.auto.enabled?'Automatic research trades and exits run only while this page is active.':'Manual mode: no automatic scans, entries or exits. Use the top switch to start, not chat.')}
  const t=tokens.find(x=>x.symbol&&p.includes(x.symbol.toLowerCase())&&x.symbol.length>=3)||tokens.find(x=>x.name&&x.name.length>=4&&p.includes(x.name.toLowerCase()));
- if(t){const mr=marketScreen(t),risk=riskFor(t);return lead+t.name+' ('+t.symbol+'): last price 
-</body>
-</html>+t.price.toPrecision(7)+'; pool liquidity '+compact(t.liquidity)+'; 1h volume '+compact(t.volume)+'; 1h change '+pct(t.change)+'; market filters '+(mr.passed?'PASS':'BLOCK')+'; RugCheck research status '+risk.status+'. '+(risk.status==='research'?'Limited automated report; not independently verified.':'Security findings are unavailable or require review.')+' This is not a trade recommendation.'}
+ if(t){const mr=marketScreen(t),risk=riskFor(t);return lead+t.name+' ('+t.symbol+'): last price $'+t.price.toPrecision(7)+'; pool liquidity '+compact(t.liquidity)+'; 1h volume '+compact(t.volume)+'; 1h change '+pct(t.change)+'; market filters '+(mr.passed?'PASS':'BLOCK')+'; RugCheck research status '+risk.status+'. '+(risk.status==='research'?'Limited automated report; not independently verified.':'Security findings are unavailable or require review.')+' This is not a trade recommendation.'}
  if(/(best|opportunit|buy|top coin|which coin|pick|signal|shortlist|market)/.test(p)){
  if(!tokens.length)return 'No scanner tokens loaded. Tap Refresh on the Scanner tab, then ask again.';
  const top=tokens.filter(t=>marketScreen(t).passed).sort((a,b)=>marketScreen(b).score-marketScreen(a).score).slice(0,5);
