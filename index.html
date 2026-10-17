@@ -25,6 +25,11 @@
 .chattools .field{flex:1}
 #appInstallButton{background:#1a3e3c;border:1px solid #246e61;color:#84f5d2}
 
+.chartLiveStatus{display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin:10px 0}.chartLiveStatus .btn{white-space:nowrap}
+.chartQuotePanel{display:flex;justify-content:space-between;align-items:center;gap:12px;background:#101e2e;border:1px solid #254963;border-radius:12px;padding:11px 12px;margin:11px 0}
+.chartQuoteMain{flex:1;min-width:0}.chartQuoteMain small{display:block;color:#b6c7df;font-size:10px;letter-spacing:.04em}.chartQuoteMain strong{display:block;color:#38d6a7;font-size:22px;margin-top:4px;overflow-wrap:anywhere}
+.chartQuoteDetails{flex:1;display:flex;flex-direction:column;gap:5px;color:#b8c8de;font-size:11px}
+@media(max-width:520px){.chartQuotePanel{display:block}.chartQuoteDetails{margin-top:8px}}
 .terminalChart{width:100%;height:420px;background:#0b1321;border:1px solid #293750;border-radius:14px;overflow:hidden;position:relative}
 .pro-toolbar{display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin:10px 0}
 .chartStatGrid{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:8px;margin:12px 0}
@@ -66,6 +71,8 @@
 <div class="titlebar"><div><h2>Pro Chart Terminal</h2><p class="fine">Actual Solana pool OHLCV · TradingView Lightweight Charts · pinch/drag to zoom and pan · delayed and limited by public feeds.</p></div><span class="chip review" id="chartFeedStatus">No chart selected</span></div>
 <div class="pro-toolbar"><button class="btn tiny" id="chartScanMode" type="button">New coins</button><button class="btn tiny" id="chartOlder" type="button">◉ Established pools</button><span class="fine" id="chartListStatus">Select new tokens or load established Solana pools for longer historical charts.</span></div>
 <div class="controls"><select class="field search" id="chartTokenSelect" aria-label="Chart token"><option value="">Refresh Scanner and select a coin</option></select><select class="field" id="chartPeriod" aria-label="Candle timeframe"><option value="minute:1">1 minute</option><option value="minute:5" selected>5 minutes</option><option value="minute:15">15 minutes</option><option value="hour:1">1 hour</option><option value="hour:4">4 hours</option><option value="day:1">1 day</option></select><button class="btn" id="chartRefresh" type="button">↻ Load chart</button><a id="chartExternal" class="btn tiny ghost" href="https://www.geckoterminal.com" target="_blank" rel="noopener noreferrer">View full chart ↗</a></div>
+<div class="chartLiveStatus"><button id="chartLiveToggle" class="btn tiny" type="button">◉ Chart updates: ON</button><span id="chartSyncStatus" class="fine">Select a pool. Candles check every 45s, quotes every 30s while Chart is visible.</span></div>
+<div class="chartQuotePanel"><div class="chartQuoteMain"><small>INDICATIVE POOL QUOTE · NOT A LIVE TRADE TICK</small><strong id="chartSpotPrice">—</strong></div><div class="chartQuoteDetails"><span id="chartSpotSource">Source: waiting</span><span id="chartSpotTime">Last quote: —</span><span id="chartCandleTime">Last reported candle: —</span></div></div>
 <div class="chartStatGrid"><div class="chartStat"><small>OPEN</small><strong id="ohlcOpen">—</strong></div><div class="chartStat"><small>HIGH</small><strong id="ohlcHigh">—</strong></div><div class="chartStat"><small>LOW</small><strong id="ohlcLow">—</strong></div><div class="chartStat"><small>CLOSE</small><strong id="ohlcClose">—</strong></div></div>
 <div class="chartLegend">● <b>EMA 9</b> &nbsp; ● <span style="color:#f2b36e">EMA 21</span> &nbsp; ▥ Volume (when supplied) &nbsp; · Touch/drag chart to inspect</div>
 <div id="chartLowData" class="chartHint" hidden></div>
@@ -361,8 +368,65 @@ init();
 
 
 let chartLoading=false,chartToken='',chartPool='',chartLastFetch=0,chartBars=[];
+let chartLiveEnabled=true,chartRenderedKey='',chartRenderSignature='',chartLastBarChange=0;
+let chartSpotRequestAt=0,chartSpotPrice=NaN,chartSpotSource='',chartSpotChangedAt=0,chartSpotFetchBusy=false,chartSpotKey='',chartLastFailure='';
 let chartMode='scanner',chartCatalog=[],chartCatalogLoaded=false,proInstance=null,proCandles=null,proVolume=null,proEMA9=null,proEMA21=null;
 const chartUniverse=()=>chartMode==='older'?chartCatalog:tokens;
+const chartSelectedKey=()=>chartMode+'|'+chartPool+'|'+el('chartPeriod').value;
+const isChartVisible=()=>document.visibilityState==='visible'&&el('chart').classList.contains('on');
+const ageClock=ms=>ms>0?Math.max(0,Math.floor((Date.now()-ms)/1000))+'s':'—';
+function setChartLiveStatus(){
+ el('chartLiveToggle').textContent=chartLiveEnabled?'◉ Chart updates: ON':'◯ Chart updates: OFF';
+ el('chartSyncStatus').textContent=!chartPool?'Choose a pool to begin':(!chartLiveEnabled?'Automatic chart refresh paused; Load chart remains available':!isChartVisible()?'Chart updates paused while hidden':'Checking candles about every 45s and pool quotes every 30s')+(chartLastFailure?' · Last error: '+chartLastFailure:'');
+}
+function resetChartSpot(){
+ chartSpotRequestAt=0;chartSpotPrice=NaN;chartSpotSource='';chartSpotChangedAt=0;chartSpotKey='';
+ el('chartSpotPrice').textContent='—';
+ el('chartSpotSource').textContent='Source: waiting';
+ el('chartSpotTime').textContent='Last quote: —';
+ el('chartCandleTime').textContent='Last reported candle: —';
+}
+function renderChartSpot(){
+ const same=Number.isFinite(chartSpotPrice);
+ el('chartSpotPrice').textContent=same?fmtPrice(chartSpotPrice):'Unavailable';
+ el('chartSpotSource').textContent='Source: '+(chartSpotSource||'unavailable');
+ el('chartSpotTime').textContent='Last quote received: '+(chartSpotRequestAt?timeText(chartSpotRequestAt):'—')+(same&&chartSpotChangedAt?' · unchanged '+ageClock(chartSpotChangedAt):'');
+}
+async function fetchChartSpot(){
+ const selected=chartUniverse().find(t=>t.pool===chartPool);
+ if(!selected||chartSpotFetchBusy||!isChartVisible())return;
+ const key=chartSelectedKey(),target=selected.pool;chartSpotFetchBusy=true;
+ try{
+  let price=NaN,source='';
+  if(selected.isBase){
+   try{
+    const d=await jsonFetch('https://api.dexscreener.com/latest/dex/pairs/solana/'+encodeURIComponent(target));
+    const list=Array.isArray(d?.pairs)?d.pairs:[];
+    const pair=list.find(p=>p.chainId==='solana'&&p.pairAddress===target&&p.baseToken?.address===selected.address&&Number.isFinite(Number(p.priceUsd))&&Number(p.priceUsd)>0);
+    if(pair){price=Number(pair.priceUsd);source='DEX Screener pool quote'}
+   }catch(e){/* Try GeckoTerminal pool quote instead */ }
+  }
+  if(!Number.isFinite(price)){
+   const d=await jsonFetch(API_G+'/networks/solana/pools/'+encodeURIComponent(target));
+   const a=d?.data?.attributes||{};
+   const v=Number(selected.isBase?a.base_token_price_usd:a.quote_token_price_usd);
+   if(Number.isFinite(v)&&v>0){price=v;source='GeckoTerminal pool quote'}
+  }
+  if(chartSelectedKey()!==key)return;
+  chartSpotRequestAt=Date.now();
+  if(Number.isFinite(price)){
+   if(!Number.isFinite(chartSpotPrice)||Math.abs(price-chartSpotPrice)/Math.max(chartSpotPrice,Number.MIN_VALUE)>1e-10)chartSpotChangedAt=Date.now();
+   chartSpotPrice=price;chartSpotSource=source;renderChartSpot();
+  }else{
+   chartSpotSource='Quote unavailable';renderChartSpot();
+  }
+ }catch(e){
+  if(chartSelectedKey()!==key)return;
+  chartSpotRequestAt=Date.now();
+  chartSpotSource='Quote request failed';
+  renderChartSpot();
+ }finally{chartSpotFetchBusy=false}
+}
 const fmtPrice=v=>!Number.isFinite(v)?'—':(v>=1?'$'+v.toFixed(4):v>=.01?'$'+v.toFixed(6):'$'+v.toPrecision(7));
 function chartMessage(msg){el('chartSummary').textContent=msg}
 function populateChartSelect(){
@@ -375,12 +439,13 @@ function populateChartSelect(){
   select.dataset.loadedKey=key;
  }
  if(cur&&universe.some(t=>t.pool===cur)){select.value=cur;chartPool=cur}
- else{chartPool='';select.value=''}
+ else{if(chartPool)resetChartSpot();chartPool='';select.value=''}
+ setChartLiveStatus()
 }
 function selectChartToken(addr){
  const t=tokens.find(x=>x.address===addr);
  if(!t){showToast('Token not present in current live feed');return}
- chartMode='scanner';chartPool=t.pool;populateChartSelect();
+ chartMode='scanner';chartPool=t.pool;resetChartSpot();populateChartSelect();
  document.querySelector('.nav button[data-tab="chart"]').click();void loadCandleChart();
 }
 function displayOHLC(b){
@@ -410,7 +475,7 @@ function initProChart(){
   return true;
  }catch(e){try{proInstance?.remove()}catch{}proInstance=null;return false}
 }
-function drawCandles(bars){
+function drawCandles(bars, preserveView=false){
  displayOHLC(bars.length?bars[bars.length-1]:null);
  if(initProChart()){
   const candles=bars.map(b=>({time:b[0],open:b[1],high:b[2],low:b[3],close:b[4]}));
@@ -418,7 +483,7 @@ function drawCandles(bars){
    proCandles.setData(candles);
    proEMA9.setData(emaData(bars,9));proEMA21.setData(emaData(bars,21));
    proVolume.setData(bars.filter(b=>Number.isFinite(b[5])&&b[5]>=0).map(b=>({time:b[0],value:b[5],color:b[4]>=b[1]?'rgba(38,205,167,.30)':'rgba(241,106,128,.30)'})));
-   if(bars.length>=25)proInstance.timeScale().fitContent();else if(bars.length)proInstance.timeScale().setVisibleLogicalRange({from:Math.min(-35,bars.length-35),to:bars.length+5});
+   if(!preserveView){if(bars.length>=25)proInstance.timeScale().fitContent();else if(bars.length)proInstance.timeScale().setVisibleLogicalRange({from:Math.min(-35,bars.length-35),to:bars.length+5});}
    el('proChart').style.display='block';el('priceChart').style.display='none';
    return;
   }catch(e){chartMessage('Professional chart unavailable ('+e.message+'). Showing fallback instead.')}
@@ -445,17 +510,21 @@ async function fetchEstablishedChartPools(){
   const seen=new Set();
   chartCatalog=parsed.filter(t=>{if(seen.has(t.pool))return false;seen.add(t.pool);return true});
   if(!chartCatalog.length)throw Error('No usable established pool results');
-  chartCatalogLoaded=true;chartMode='older';chartPool='';populateChartSelect();
+  chartCatalogLoaded=true;chartMode='older';chartPool='';resetChartSpot();populateChartSelect();
   el('chartListStatus').textContent=chartCatalog.length+' established chart-only pools loaded (not additional trading candidates).';
   showToast('Established pool charts available');
  }catch(e){el('chartListStatus').textContent='Established pools unavailable: '+String(e.message||e)+'. Try later; free API limits apply.'}
  finally{button.disabled=false}
 }
+
 async function loadCandleChart(){
  const pool=el('chartTokenSelect').value||chartPool,t=chartUniverse().find(x=>x.pool===pool);
  if(!t||!coinAddr(t.pool)||!coinAddr(t.address)){chartMessage('Choose a Solana pool first. For more price history, tap Established pools.');drawCandles([]);return}
- if(chartLoading)return;chartLoading=true;chartPool=pool;el('chartRefresh').disabled=true;el('chartFeedStatus').textContent='Fetching OHLCV';
- el('chartExternal').href=t.url;
+ if(chartLoading)return;
+ chartLoading=true;chartPool=pool;
+ const selectedKey=chartSelectedKey();
+ el('chartRefresh').disabled=true;el('chartFeedStatus').textContent='Checking candles…';chartLastFailure='';
+ el('chartExternal').href=t.url;setChartLiveStatus();
  const [timeframe,aggregate]=el('chartPeriod').value.split(':');
  const path=API_G+'/networks/solana/pools/'+encodeURIComponent(t.pool)+'/ohlcv/'+timeframe+'?aggregate='+aggregate+'&limit=160&currency=usd&token='+encodeURIComponent(t.address);
  try{
@@ -464,14 +533,33 @@ async function loadCandleChart(){
   const bars=input.map(b=>[Number(b[0]),Number(b[1]),Number(b[2]),Number(b[3]),Number(b[4]),Number(b[5])]).filter(b=>b.slice(0,5).every(Number.isFinite)&&b[1]>0&&b[2]>=Math.max(b[1],b[4])&&b[3]<=Math.min(b[1],b[4])).sort((a,b)=>a[0]-b[0]);
   const unique=[...new Map(bars.map(b=>[b[0],b])).values()];
   if(!unique.length)throw Error('No valid candles available');
-  if(chartPool!==pool)return;
-  chartBars=unique;chartLastFetch=Date.now();drawCandles(unique);
+  if(chartSelectedKey()!==selectedKey)return;
+  const signature=unique.map(b=>b.slice(0,6).join(',')).join(';');
+  const sameKey=chartRenderedKey===selectedKey;
+  const changed=signature!==chartRenderSignature;
+  const latest=unique[unique.length-1],prev=chartBars.length&&sameKey?chartBars[chartBars.length-1]:null;
+  const added=!!prev&&latest[0]>prev[0];
+  chartBars=unique;chartLastFetch=Date.now();
+  if(changed||!sameKey){drawCandles(unique,sameKey);chartRenderSignature=signature;chartRenderedKey=selectedKey;chartLastBarChange=chartLastFetch}
+  if(!chartSpotKey||chartSpotKey!==selectedKey){resetChartSpot();chartSpotKey=selectedKey}
+  el('chartCandleTime').textContent='Latest reported candle: '+new Date(latest[0]*1000).toLocaleTimeString();
   const low=unique.length<20,warning=el('chartLowData');warning.hidden=!low;
-  if(low)warning.textContent='Only '+unique.length+' actual candles for this pool and timeframe. This is not enough for meaningful EMA or trend analysis. Try 1 minute, or load an established pool. No candles are invented.';
-  el('chartFeedStatus').textContent=low?'Limited history':'Live historical feed';
-  chartMessage(t.symbol+' · '+unique.length+' reported '+el('chartPeriod').selectedOptions[0].text+' candles · latest close '+fmtPrice(unique[unique.length-1][4])+' · fetched '+timeText(chartLastFetch)+'. '+(chartMode==='older'?'Chart-only established pool; AUTO IQ does not trade this added list.':'Scanner token; passing a chart test does not certify safety.'));
- }catch(e){if(chartPool===pool){chartBars=[];drawCandles([]);el('chartLowData').hidden=true;el('chartFeedStatus').textContent='Chart unavailable';chartMessage('Market-data request failed: '+String(e.message||e)+'. Retry later or open View full chart. Free feed is rate limited.')}}
- finally{chartLoading=false;el('chartRefresh').disabled=false}
+  if(low)warning.textContent='Only '+unique.length+' real candles. Not enough for reliable technical indicators. Try a lower timeframe or a different pool; no artificial candles added.';
+  const elapsed=Date.now()-latest[0]*1000;
+  const bucketMs=(timeframe==='minute'?60000:timeframe==='hour'?3600000:86400000)*Number(aggregate);
+  const stale=elapsed>Math.max(bucketMs*2+60000,180000);
+  el('chartFeedStatus').textContent=stale?'Old candle data':!changed&&sameKey?'No new trades/candles':added?'New candle':'Candles refreshed';
+  chartMessage(t.symbol+' · '+unique.length+' recorded '+el('chartPeriod').selectedOptions[0].text+' candles · latest close '+fmtPrice(latest[4])+' · checked '+timeText(chartLastFetch)+'. '+(stale?'Latest candle is old; trading may be quiet or API delayed.':!changed&&sameKey?'Candle values unchanged since previous check; no new trades or feed still cached.':added?'New candle received.':'Latest OHLCV values received.')+' Pool quote is separate and may differ from candle close.');
+  if(!chartSpotRequestAt)void fetchChartSpot();
+ }catch(e){
+  if(chartSelectedKey()!==selectedKey)return;
+  chartLastFailure=String(e.message||e);
+  el('chartFeedStatus').textContent=chartBars.length&&chartRenderedKey===selectedKey?'Data delayed':'Chart unavailable';
+  if(!chartBars.length||chartRenderedKey!==selectedKey){chartBars=[];drawCandles([])}
+  chartMessage('Unable to get current candles: '+chartLastFailure+'. '+(chartBars.length?'Previously loaded candles retained; they may be stale.':'Try another pool or retry later.')+' Check free API rate limits.');
+ }finally{
+  chartLoading=false;el('chartRefresh').disabled=false;setChartLiveStatus();
+ }
 }
 function replyToMarketQuestion(q){
  const p=q.trim().toLowerCase();const fresh=!!feedTime&&Date.now()-feedTime<180000;let lead='Scanner data '+(fresh?'updated '+timeText(feedTime):'is stale or not loaded; tap Refresh for new quotes')+'. ';
@@ -497,11 +585,14 @@ function postMarketChat(){
 (function activateMarketViews(){
  const priorDraw=draw;draw=function(){priorDraw();populateChartSelect()};
  el('tokenList').addEventListener('click',ev=>{const b=ev.target.closest('button[data-chart]');if(b)selectChartToken(b.dataset.chart)});
- el('chartTokenSelect').addEventListener('change',()=>{chartPool=el('chartTokenSelect').value;void loadCandleChart()});
- el('chartScanMode').addEventListener('click',()=>{chartMode='scanner';chartPool='';populateChartSelect();el('chartListStatus').textContent='New scanner pools shown. To compare longer-term trends, use Established pools.'});
+ el('chartTokenSelect').addEventListener('change',()=>{chartPool=el('chartTokenSelect').value;resetChartSpot();void loadCandleChart()});
+ el('chartScanMode').addEventListener('click',()=>{chartMode='scanner';chartPool='';resetChartSpot();populateChartSelect();el('chartListStatus').textContent='New scanner pools shown. To compare longer-term trends, use Established pools.'});
  el('chartOlder').addEventListener('click',()=>void fetchEstablishedChartPools());
- el('chartPeriod').addEventListener('change',()=>void loadCandleChart());el('chartRefresh').addEventListener('click',()=>void loadCandleChart());
- document.querySelector('.nav button[data-tab="chart"]').addEventListener('click',()=>{populateChartSelect();if(chartPool&&Date.now()-chartLastFetch>60000)void loadCandleChart()});
+ el('chartPeriod').addEventListener('change',()=>{resetChartSpot();void loadCandleChart()});el('chartRefresh').addEventListener('click',()=>{void loadCandleChart();void fetchChartSpot()});
+ el('chartLiveToggle').addEventListener('click',()=>{chartLiveEnabled=!chartLiveEnabled;setChartLiveStatus();if(chartLiveEnabled&&chartPool&&isChartVisible()){void loadCandleChart();void fetchChartSpot()}});
+ setInterval(()=>{if(!chartLiveEnabled||!chartPool||!isChartVisible())return;if(!chartLoading&&Date.now()-chartLastFetch>=45000)void loadCandleChart();if(!chartSpotFetchBusy&&Date.now()-chartSpotRequestAt>=30000)void fetchChartSpot()},5000);
+ document.addEventListener('visibilitychange',()=>{setChartLiveStatus();if(isChartVisible()&&chartLiveEnabled&&chartPool){if(Date.now()-chartLastFetch>=45000)void loadCandleChart();if(Date.now()-chartSpotRequestAt>=30000)void fetchChartSpot()}});
+ document.querySelector('.nav button[data-tab="chart"]').addEventListener('click',()=>{populateChartSelect();setChartLiveStatus();if(chartPool&&chartLiveEnabled){if(Date.now()-chartLastFetch>45000)void loadCandleChart();if(Date.now()-chartSpotRequestAt>=30000)void fetchChartSpot()}});
  el('sendMarketQuestion').addEventListener('click',postMarketChat);
  el('marketQuestion').addEventListener('keydown',e=>{if(e.key==='Enter')postMarketChat()});
  let promptInstall=null;window.addEventListener('beforeinstallprompt',e=>{e.preventDefault();promptInstall=e});
