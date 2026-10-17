@@ -1,0 +1,20 @@
+{
+  "name": "HYPER AI CRYPTO IQ BOT",
+  "short_name": "HYPER IQ",
+  "description": "Solana market research, live charts and auto paper-trading simulator. No real orders.",
+  "id": "./",
+  "start_url": "./",
+  "scope": "./",
+  "display": "standalone",
+  "orientation": "any",
+  "background_color": "#0b0e18",
+  "theme_color": "#0b0e18",
+  "icons": [
+    {
+      "src": "./app-icon.svg",
+      "sizes": "any",
+      "type": "image/svg+xml",
+      "purpose": "any maskable"
+    }
+  ]
+}
