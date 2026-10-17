@@ -4,6 +4,7 @@
 <meta charset="utf-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
 <meta name="theme-color" content="#0b0e18" />
+<script defer src="https://unpkg.com/lightweight-charts@5.0.0/dist/lightweight-charts.standalone.production.js"></script>
 <meta name="mobile-web-app-capable" content="yes" />
 <meta name="apple-mobile-web-app-capable" content="yes" />
 <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
@@ -23,6 +24,19 @@
 .chattools{display:flex;gap:8px;margin-top:10px}
 .chattools .field{flex:1}
 #appInstallButton{background:#1a3e3c;border:1px solid #246e61;color:#84f5d2}
+
+.terminalChart{width:100%;height:420px;background:#0b1321;border:1px solid #293750;border-radius:14px;overflow:hidden;position:relative}
+.pro-toolbar{display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin:10px 0}
+.chartStatGrid{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:8px;margin:12px 0}
+.chartStat{background:#161f32;border:1px solid #293750;border-radius:10px;padding:8px 7px;min-width:0}
+.chartStat small{display:block;color:#92a7c9;font-size:10px;letter-spacing:.05em}
+.chartStat strong{display:block;font-size:12px;margin-top:5px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.chartHint{font-size:12px;line-height:1.5;color:#f0c37a;padding:10px 12px;border-radius:10px;background:#332718;border:1px solid #80632d;margin:9px 0}
+#chartOlder{background:#193748;border:1px solid #2b728e}
+#chartOlder:disabled{opacity:.55}
+.chartLegend{font-size:11px;color:#99b0cc;margin:4px 0 11px}
+.chartLegend b{color:#40d8aa}
+@media(max-width:520px){.terminalChart{height:340px}.chartStatGrid{grid-template-columns:repeat(2,minmax(0,1fr))}}
 </style>
 </head>
 <body>
@@ -49,9 +63,14 @@
 <section id="portfolio" class="pane"><div class="section"><div class="titlebar"><h2>Virtual positions</h2><span class="chip">SIMULATED · NOT AN EXCHANGE</span></div><p class="fine">Mark-to-market estimates use available pool prices. Automatic stop-loss, take-profit and trailing checks run only while AUTO is ON and the dashboard is active with fresh quotes. With AUTO OFF, you must sell manually. These are never exchange-side orders.</p><div class="rows" id="positionList"></div></div></section>
 <section id="history" class="pane"><div class="section"><div class="titlebar"><h2>Paper trade history</h2><button class="btn tiny" id="exportButton" type="button">↓ Export CSV</button></div><div class="rows" id="historyList"></div></div></section>
 <section id="chart" class="pane"><div class="section">
-<div class="titlebar"><div><h2>Live Solana candlestick chart</h2><p class="fine">GeckoTerminal OHLCV · chart updates only while the page is active; prices may be delayed. Charts are market data, not predictions.</p></div><span class="chip review" id="chartFeedStatus">No chart selected</span></div>
-<div class="controls"><select class="field search" id="chartTokenSelect" aria-label="Chart token"><option value="">Refresh Scanner and select a coin</option></select><select class="field" id="chartPeriod" aria-label="Candle timeframe"><option value="minute:1">1 minute</option><option value="minute:5" selected>5 minutes</option><option value="minute:15">15 minutes</option><option value="hour:1">1 hour</option></select><button class="btn" id="chartRefresh" type="button">↻ Load chart</button><a id="chartExternal" class="btn tiny ghost" href="https://www.geckoterminal.com" target="_blank" rel="noopener noreferrer">View full chart ↗</a></div>
-<canvas id="priceChart" class="livecanvas" width="920" height="310" role="img" aria-label="Candlestick chart with USD price"></canvas>
+<div class="titlebar"><div><h2>Pro Chart Terminal</h2><p class="fine">Actual Solana pool OHLCV · TradingView Lightweight Charts · pinch/drag to zoom and pan · delayed and limited by public feeds.</p></div><span class="chip review" id="chartFeedStatus">No chart selected</span></div>
+<div class="pro-toolbar"><button class="btn tiny" id="chartScanMode" type="button">New coins</button><button class="btn tiny" id="chartOlder" type="button">◉ Established pools</button><span class="fine" id="chartListStatus">Select new tokens or load established Solana pools for longer historical charts.</span></div>
+<div class="controls"><select class="field search" id="chartTokenSelect" aria-label="Chart token"><option value="">Refresh Scanner and select a coin</option></select><select class="field" id="chartPeriod" aria-label="Candle timeframe"><option value="minute:1">1 minute</option><option value="minute:5" selected>5 minutes</option><option value="minute:15">15 minutes</option><option value="hour:1">1 hour</option><option value="hour:4">4 hours</option><option value="day:1">1 day</option></select><button class="btn" id="chartRefresh" type="button">↻ Load chart</button><a id="chartExternal" class="btn tiny ghost" href="https://www.geckoterminal.com" target="_blank" rel="noopener noreferrer">View full chart ↗</a></div>
+<div class="chartStatGrid"><div class="chartStat"><small>OPEN</small><strong id="ohlcOpen">—</strong></div><div class="chartStat"><small>HIGH</small><strong id="ohlcHigh">—</strong></div><div class="chartStat"><small>LOW</small><strong id="ohlcLow">—</strong></div><div class="chartStat"><small>CLOSE</small><strong id="ohlcClose">—</strong></div></div>
+<div class="chartLegend">● <b>EMA 9</b> &nbsp; ● <span style="color:#f2b36e">EMA 21</span> &nbsp; ▥ Volume (when supplied) &nbsp; · Touch/drag chart to inspect</div>
+<div id="chartLowData" class="chartHint" hidden></div>
+<div id="proChart" class="terminalChart" role="img" aria-label="Interactive candlestick chart"></div>
+<canvas id="priceChart" class="livecanvas" style="display:none" width="920" height="310" role="img" aria-label="Basic fallback candlestick chart"></canvas>
 <div class="fine" id="chartSummary">Choose a token to load candles. No historical data is simulated.</div>
 </div></section>
 <section id="chat" class="pane"><div class="section">
@@ -340,50 +359,119 @@ function wire(){document.querySelectorAll('.nav button').forEach(b=>b.addEventLi
 function init(){wire();applySettingsUI();applyAutoUI();draw();el('clock').textContent=timeText(Date.now());setInterval(()=>{el('clock').textContent=timeText(Date.now());if(feedTime&&Date.now()-feedTime>180000&&sourceMode!=='sample'){status('FEED STALE','fail')}if(tab==='portfolio')renderPositions();if(tab==='auto')drawAuto()},10000);setInterval(()=>{if(account.auto.enabled&&!document.hidden)void refresh()},REFRESH_MS);el('feedInfo').textContent='AUTO OFF · Tap Refresh to load live market data manually.'}
 init();
 
-let chartLoading=false,chartToken='',chartLastFetch=0,chartBars=[];
-function chartMessage(text){el('chartSummary').textContent=text}
+
+let chartLoading=false,chartToken='',chartPool='',chartLastFetch=0,chartBars=[];
+let chartMode='scanner',chartCatalog=[],chartCatalogLoaded=false,proInstance=null,proCandles=null,proVolume=null,proEMA9=null,proEMA21=null;
+const chartUniverse=()=>chartMode==='older'?chartCatalog:tokens;
+const fmtPrice=v=>!Number.isFinite(v)?'—':(v>=1?'$'+v.toFixed(4):v>=.01?'$'+v.toFixed(6):'$'+v.toPrecision(7));
+function chartMessage(msg){el('chartSummary').textContent=msg}
 function populateChartSelect(){
- const select=el('chartTokenSelect'), cur=chartToken||select.value;
- const key=tokens.map(t=>t.address).join('|');
+ const select=el('chartTokenSelect'),cur=chartPool||select.value;
+ const universe=chartUniverse();
+ const key=chartMode+':'+universe.map(t=>t.pool).join('|');
  if(select.dataset.loadedKey!==key){
-   select.replaceChildren(new Option('Select a Solana token',''));
-   for(const t of tokens)select.add(new Option(String(t.symbol||'TOKEN')+' · '+String(t.name||'')+' · '+(t.address||'').slice(0,6),t.address));
-   select.dataset.loadedKey=key;
+  select.replaceChildren(new Option(universe.length?'Select a Solana pool':'No pools loaded; tap Refresh / Established pools',''));
+  for(const t of universe)select.add(new Option(String(t.symbol||'TOKEN')+' · '+String(t.name||'')+' · '+(t.pool||'').slice(0,6),t.pool));
+  select.dataset.loadedKey=key;
  }
- if(cur&&tokens.some(t=>t.address===cur)){select.value=cur;chartToken=cur}
- else{chartToken='';select.value=''}
+ if(cur&&universe.some(t=>t.pool===cur)){select.value=cur;chartPool=cur}
+ else{chartPool='';select.value=''}
 }
-function selectChartToken(addr){if(!tokens.some(t=>t.address===addr)){showToast('Token not present in current live feed');return}chartToken=addr;populateChartSelect();el('chartTokenSelect').value=addr;document.querySelector('.nav button[data-tab="chart"]').click();void loadCandleChart()}
+function selectChartToken(addr){
+ const t=tokens.find(x=>x.address===addr);
+ if(!t){showToast('Token not present in current live feed');return}
+ chartMode='scanner';chartPool=t.pool;populateChartSelect();
+ document.querySelector('.nav button[data-tab="chart"]').click();void loadCandleChart();
+}
+function displayOHLC(b){
+ const names=['ohlcOpen','ohlcHigh','ohlcLow','ohlcClose'];
+ if(!b){names.forEach(n=>el(n).textContent='—');return}
+ [b[1],b[2],b[3],b[4]].forEach((v,i)=>el(names[i]).textContent=fmtPrice(v));
+}
+function emaData(bars,period){
+ if(bars.length<period)return [];
+ const factor=2/(period+1);let avg=bars.slice(0,period).reduce((sum,b)=>sum+b[4],0)/period;
+ const out=[{time:bars[period-1][0],value:avg}];
+ for(let i=period;i<bars.length;i++){avg=bars[i][4]*factor+avg*(1-factor);out.push({time:bars[i][0],value:avg})}
+ return out;
+}
+function initProChart(){
+ if(proInstance)return true;
+ const L=window.LightweightCharts,host=el('proChart');
+ if(!L||typeof L.createChart!=='function'||!L.CandlestickSeries)return false;
+ try{
+  proInstance=L.createChart(host,{autoSize:true,layout:{background:{type:'solid',color:'#0b1321'},textColor:'#a9b8d4',fontSize:12},grid:{vertLines:{color:'#1c2c45'},horzLines:{color:'#1c2c45'}},rightPriceScale:{borderColor:'#35455c',scaleMargins:{top:.08,bottom:.22}},timeScale:{borderColor:'#35455c',rightOffset:6,barSpacing:10,minBarSpacing:3,timeVisible:true,secondsVisible:false},crosshair:{mode:L.CrosshairMode?.Normal??0,vertLine:{color:'#7189aa',labelBackgroundColor:'#37485f'},horzLine:{color:'#7189aa',labelBackgroundColor:'#37485f'}},handleScale:{mouseWheel:true,pinch:true,axisPressedMouseMove:true},handleScroll:{mouseWheel:true,pressedMouseMove:true,horzTouchDrag:true,vertTouchDrag:true},localization:{priceFormatter:v=>fmtPrice(v)}});
+  proCandles=proInstance.addSeries(L.CandlestickSeries,{upColor:'#26cda7',downColor:'#f16a80',wickUpColor:'#26cda7',wickDownColor:'#f16a80',borderVisible:false,priceLineVisible:true,lastValueVisible:true,priceFormat:{type:'custom',minMove:0.000000000001,formatter:v=>fmtPrice(v)}});
+  proEMA9=proInstance.addSeries(L.LineSeries,{color:'#38d8ad',lineWidth:2,priceLineVisible:false,lastValueVisible:false});
+  proEMA21=proInstance.addSeries(L.LineSeries,{color:'#f2b36e',lineWidth:2,priceLineVisible:false,lastValueVisible:false});
+  proVolume=proInstance.addSeries(L.HistogramSeries,{priceFormat:{type:'volume'},priceScaleId:'',priceLineVisible:false,lastValueVisible:false});
+  proVolume.priceScale().applyOptions({scaleMargins:{top:.82,bottom:0}});
+  proInstance.subscribeCrosshairMove(e=>{const c=e?.seriesData?.get(proCandles);if(c&&Number.isFinite(c.open)){displayOHLC([0,c.open,c.high,c.low,c.close])}else if(chartBars.length)displayOHLC(chartBars[chartBars.length-1])});
+  return true;
+ }catch(e){try{proInstance?.remove()}catch{}proInstance=null;return false}
+}
 function drawCandles(bars){
- const canvas=el('priceChart'), ctx=canvas.getContext('2d');
- const w=canvas.width,h=canvas.height;ctx.clearRect(0,0,w,h);ctx.fillStyle='#0b1321';ctx.fillRect(0,0,w,h);
- if(!bars.length){ctx.fillStyle='#b7c7e1';ctx.font='18px sans-serif';ctx.fillText('No verified OHLCV candles available',32,55);return}
- const hi=Math.max(...bars.map(b=>b[2])),lo=Math.min(...bars.map(b=>b[3]));let diff=hi-lo||hi*.02||1;
- const top=25,bottom=h-46,left=75,right=w-28,pw=right-left,ph=bottom-top;
- const yy=v=>top+(hi-v+diff*.08)/(diff*1.16)*ph;
- ctx.strokeStyle='#26344a';ctx.lineWidth=1;ctx.font='12px sans-serif';
- for(let i=0;i<=4;i++){let y=top+i*ph/4;ctx.beginPath();ctx.moveTo(left,y);ctx.lineTo(right,y);ctx.stroke();ctx.fillStyle='#a8b8cf';let value=hi+diff*.08-i*diff*1.16/4;ctx.fillText(value<.001?value.toExponential(2):value.toPrecision(5),5,y+3)}
- const step=pw/bars.length;
- bars.forEach((b,i)=>{const [ts,o,hh,ll,c]=b;const xx=left+(i+.5)*step;const col=c>=o?'#3cdeb6':'#ff7b88';ctx.strokeStyle=col;ctx.fillStyle=col;ctx.lineWidth=Math.max(1,Math.min(2,step/5));ctx.beginPath();ctx.moveTo(xx,yy(hh));ctx.lineTo(xx,yy(ll));ctx.stroke();const wy=Math.min(yy(o),yy(c)),bh=Math.max(1.5,Math.abs(yy(o)-yy(c)));ctx.fillRect(xx-Math.max(1,step*.31),wy,Math.max(2,step*.62),bh)});
- ctx.fillStyle='#b7c7e1';ctx.fillText(new Date(bars[0][0]*1000).toLocaleTimeString(),left,bottom+25);
- ctx.fillText(new Date(bars[bars.length-1][0]*1000).toLocaleTimeString(),Math.max(left,right-100),bottom+25);
+ displayOHLC(bars.length?bars[bars.length-1]:null);
+ if(initProChart()){
+  const candles=bars.map(b=>({time:b[0],open:b[1],high:b[2],low:b[3],close:b[4]}));
+  try{
+   proCandles.setData(candles);
+   proEMA9.setData(emaData(bars,9));proEMA21.setData(emaData(bars,21));
+   proVolume.setData(bars.filter(b=>Number.isFinite(b[5])&&b[5]>=0).map(b=>({time:b[0],value:b[5],color:b[4]>=b[1]?'rgba(38,205,167,.30)':'rgba(241,106,128,.30)'})));
+   if(bars.length>=25)proInstance.timeScale().fitContent();else if(bars.length)proInstance.timeScale().setVisibleLogicalRange({from:Math.min(-35,bars.length-35),to:bars.length+5});
+   el('proChart').style.display='block';el('priceChart').style.display='none';
+   return;
+  }catch(e){chartMessage('Professional chart unavailable ('+e.message+'). Showing fallback instead.')}
+ }
+ el('proChart').style.display='none';el('priceChart').style.display='block';
+ const canvas=el('priceChart'),ctx=canvas.getContext('2d'),w=canvas.width,h=canvas.height;
+ ctx.clearRect(0,0,w,h);ctx.fillStyle='#0b1321';ctx.fillRect(0,0,w,h);
+ if(!bars.length){ctx.fillStyle='#becbe1';ctx.font='17px sans-serif';ctx.fillText('No OHLCV candles available',35,60);return}
+ const hi=Math.max(...bars.map(b=>b[2])),lo=Math.min(...bars.map(b=>b[3])),diff=hi-lo||hi*.01||1;
+ const top=20,bottom=h-40,left=72,right=w-22,pw=right-left,ph=bottom-top;
+ const y=v=>top+(hi-v+diff*.1)/(diff*1.2)*ph;
+ ctx.strokeStyle='#24334a';ctx.font='11px sans-serif';
+ for(let i=0;i<=4;i++){const yy=top+i*ph/4;ctx.beginPath();ctx.moveTo(left,yy);ctx.lineTo(right,yy);ctx.stroke();ctx.fillStyle='#99a8c0';ctx.fillText((hi+diff*.1-i*diff*1.2/4).toPrecision(4),5,yy)}
+ const visible=bars.slice(-75),step=Math.min(20,pw/Math.max(visible.length,1)),width=Math.max(3,step*.64);
+ visible.forEach((b,i)=>{const x=right-15-(visible.length-1-i)*step,col=b[4]>=b[1]?'#27d3ae':'#fa7387';ctx.fillStyle=col;ctx.strokeStyle=col;ctx.beginPath();ctx.moveTo(x,y(b[2]));ctx.lineTo(x,y(b[3]));ctx.stroke();ctx.fillRect(x-width/2,Math.min(y(b[1]),y(b[4])),width,Math.max(1,Math.abs(y(b[1])-y(b[4]))))});
+}
+async function fetchEstablishedChartPools(){
+ if(chartCatalogLoaded){chartMode='older';chartPool='';populateChartSelect();el('chartListStatus').textContent=chartCatalog.length+' chart-only established pools. These do not change AUTO IQ trading.';return}
+ const button=el('chartOlder');button.disabled=true;el('chartListStatus').textContent='Loading established pools…';
+ try{
+  const data=await jsonFetch(API_G+'/networks/solana/pools?include=base_token,quote_token&page=1');
+  const list=Array.isArray(data?.data)?data.data:[],inc=data?.included||[];
+  const parsed=list.map(x=>fromGeckoPool(x,inc)).filter(Boolean).filter(x=>x.pool&&x.address);
+  const seen=new Set();
+  chartCatalog=parsed.filter(t=>{if(seen.has(t.pool))return false;seen.add(t.pool);return true});
+  if(!chartCatalog.length)throw Error('No usable established pool results');
+  chartCatalogLoaded=true;chartMode='older';chartPool='';populateChartSelect();
+  el('chartListStatus').textContent=chartCatalog.length+' established chart-only pools loaded (not additional trading candidates).';
+  showToast('Established pool charts available');
+ }catch(e){el('chartListStatus').textContent='Established pools unavailable: '+String(e.message||e)+'. Try later; free API limits apply.'}
+ finally{button.disabled=false}
 }
 async function loadCandleChart(){
- const addr=el('chartTokenSelect').value||chartToken,t=tokens.find(x=>x.address===addr);
- if(!t||!coinAddr(t.pool)||!coinAddr(t.address)){chartMessage('Please refresh the Scanner and choose a token with a valid pool.');drawCandles([]);return}
- if(chartLoading)return;chartLoading=true;chartToken=addr;el('chartRefresh').disabled=true;el('chartFeedStatus').textContent='Fetching OHLCV';
+ const pool=el('chartTokenSelect').value||chartPool,t=chartUniverse().find(x=>x.pool===pool);
+ if(!t||!coinAddr(t.pool)||!coinAddr(t.address)){chartMessage('Choose a Solana pool first. For more price history, tap Established pools.');drawCandles([]);return}
+ if(chartLoading)return;chartLoading=true;chartPool=pool;el('chartRefresh').disabled=true;el('chartFeedStatus').textContent='Fetching OHLCV';
  el('chartExternal').href=t.url;
  const [timeframe,aggregate]=el('chartPeriod').value.split(':');
- const path=API_G+'/networks/solana/pools/'+encodeURIComponent(t.pool)+'/ohlcv/'+timeframe+'?aggregate='+aggregate+'&limit=75&currency=usd&token='+encodeURIComponent(t.address);
+ const path=API_G+'/networks/solana/pools/'+encodeURIComponent(t.pool)+'/ohlcv/'+timeframe+'?aggregate='+aggregate+'&limit=160&currency=usd&token='+encodeURIComponent(t.address);
  try{
- const data=await jsonFetch(path);const input=data?.data?.attributes?.ohlcv_list;
- if(!Array.isArray(input)||!input.length)throw Error('No candle data for this pool');
- const bars=input.map(b=>[Number(b[0]),Number(b[1]),Number(b[2]),Number(b[3]),Number(b[4])]).filter(b=>b.length===5&&b.every(Number.isFinite)&&b[1]>0&&b[2]>=Math.max(b[1],b[4])&&b[3]<=Math.min(b[1],b[4])).sort((a,b)=>a[0]-b[0]);
- if(!bars.length)throw Error('OHLCV response had no valid candles');
- if(chartToken!==addr)return;
- chartBars=bars;chartLastFetch=Date.now();drawCandles(bars);el('chartFeedStatus').textContent='Candles loaded';
- chartMessage(t.symbol+' · '+bars.length+' reported candles · latest close $'+bars[bars.length-1][4].toPrecision(7)+' · fetched '+timeText(chartLastFetch)+' · candle feed may lag live trading.');
- }catch(e){if(chartToken===addr){chartBars=[];drawCandles([]);el('chartFeedStatus').textContent='Chart unavailable';chartMessage('Unable to load live OHLCV ('+String(e.message||e)+'). Use View full chart ↗ for the external source. No invented candles shown.')}}finally{chartLoading=false;el('chartRefresh').disabled=false}
+  const data=await jsonFetch(path),input=data?.data?.attributes?.ohlcv_list;
+  if(!Array.isArray(input)||!input.length)throw Error('No historical candles available for this pool');
+  const bars=input.map(b=>[Number(b[0]),Number(b[1]),Number(b[2]),Number(b[3]),Number(b[4]),Number(b[5])]).filter(b=>b.slice(0,5).every(Number.isFinite)&&b[1]>0&&b[2]>=Math.max(b[1],b[4])&&b[3]<=Math.min(b[1],b[4])).sort((a,b)=>a[0]-b[0]);
+  const unique=[...new Map(bars.map(b=>[b[0],b])).values()];
+  if(!unique.length)throw Error('No valid candles available');
+  if(chartPool!==pool)return;
+  chartBars=unique;chartLastFetch=Date.now();drawCandles(unique);
+  const low=unique.length<20,warning=el('chartLowData');warning.hidden=!low;
+  if(low)warning.textContent='Only '+unique.length+' actual candles for this pool and timeframe. This is not enough for meaningful EMA or trend analysis. Try 1 minute, or load an established pool. No candles are invented.';
+  el('chartFeedStatus').textContent=low?'Limited history':'Live historical feed';
+  chartMessage(t.symbol+' · '+unique.length+' reported '+el('chartPeriod').selectedOptions[0].text+' candles · latest close '+fmtPrice(unique[unique.length-1][4])+' · fetched '+timeText(chartLastFetch)+'. '+(chartMode==='older'?'Chart-only established pool; AUTO IQ does not trade this added list.':'Scanner token; passing a chart test does not certify safety.'));
+ }catch(e){if(chartPool===pool){chartBars=[];drawCandles([]);el('chartLowData').hidden=true;el('chartFeedStatus').textContent='Chart unavailable';chartMessage('Market-data request failed: '+String(e.message||e)+'. Retry later or open View full chart. Free feed is rate limited.')}}
+ finally{chartLoading=false;el('chartRefresh').disabled=false}
 }
 function replyToMarketQuestion(q){
  const p=q.trim().toLowerCase();const fresh=!!feedTime&&Date.now()-feedTime<180000;let lead='Scanner data '+(fresh?'updated '+timeText(feedTime):'is stale or not loaded; tap Refresh for new quotes')+'. ';
@@ -409,9 +497,11 @@ function postMarketChat(){
 (function activateMarketViews(){
  const priorDraw=draw;draw=function(){priorDraw();populateChartSelect()};
  el('tokenList').addEventListener('click',ev=>{const b=ev.target.closest('button[data-chart]');if(b)selectChartToken(b.dataset.chart)});
- el('chartTokenSelect').addEventListener('change',()=>{chartToken=el('chartTokenSelect').value;void loadCandleChart()});
+ el('chartTokenSelect').addEventListener('change',()=>{chartPool=el('chartTokenSelect').value;void loadCandleChart()});
+ el('chartScanMode').addEventListener('click',()=>{chartMode='scanner';chartPool='';populateChartSelect();el('chartListStatus').textContent='New scanner pools shown. To compare longer-term trends, use Established pools.'});
+ el('chartOlder').addEventListener('click',()=>void fetchEstablishedChartPools());
  el('chartPeriod').addEventListener('change',()=>void loadCandleChart());el('chartRefresh').addEventListener('click',()=>void loadCandleChart());
- document.querySelector('.nav button[data-tab="chart"]').addEventListener('click',()=>{populateChartSelect();if(chartToken&&Date.now()-chartLastFetch>60000)void loadCandleChart()});
+ document.querySelector('.nav button[data-tab="chart"]').addEventListener('click',()=>{populateChartSelect();if(chartPool&&Date.now()-chartLastFetch>60000)void loadCandleChart()});
  el('sendMarketQuestion').addEventListener('click',postMarketChat);
  el('marketQuestion').addEventListener('keydown',e=>{if(e.key==='Enter')postMarketChat()});
  let promptInstall=null;window.addEventListener('beforeinstallprompt',e=>{e.preventDefault();promptInstall=e});
