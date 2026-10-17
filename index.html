@@ -522,7 +522,7 @@ async function fetchEstablishedChartPools(){
 
 async function fetchActiveChartPools(){
  const button=el('chartActive');
- if(chartActiveLoaded){chartMode='active';chartPool='';resetChartSpot();populateChartSelect();el('chartListStatus').textContent=chartActiveCatalog.length+' higher-activity pools loaded (charts only; not additional AUTO trading tokens).';return}
+ if(chartActiveLoaded){chartMode='active';chartPool=chartActiveCatalog[0]?.pool||'';resetChartSpot();populateChartSelect();if(chartPool)void loadCandleChart();el('chartListStatus').textContent=chartActiveCatalog.length+' higher-activity pools loaded (charts only; not additional AUTO trading tokens).';return}
  button.disabled=true;el('chartListStatus').textContent='Fetching Solana volume leaders…';
  try{
   const data=await jsonFetch(API_G+'/networks/solana/pools?sort=h24_volume_usd_desc&include=base_token,quote_token&page=1');
@@ -531,7 +531,7 @@ async function fetchActiveChartPools(){
   const seen=new Set();
   chartActiveCatalog=parsed.sort((a,b)=>(Number.isFinite(b.volume)?b.volume:0)-(Number.isFinite(a.volume)?a.volume:0)).filter(t=>{if(seen.has(t.pool))return false;seen.add(t.pool);return true});
   if(!chartActiveCatalog.length)throw Error('No pools returned by volume-ranked feed');
-  chartActiveLoaded=true;chartMode='active';chartPool='';resetChartSpot();populateChartSelect();
+  chartActiveLoaded=true;chartMode='active';chartPool=chartActiveCatalog[0].pool;resetChartSpot();populateChartSelect();void loadCandleChart();
   el('chartListStatus').textContent=chartActiveCatalog.length+' volume-ranked pools loaded. Choose one with substantial transaction activity for a moving 1-minute chart. Chart-only, no automatic trades.';
   showToast('Active Solana chart pools loaded');
  }catch(e){el('chartListStatus').textContent='Active-pool feed unavailable: '+String(e.message||e)+'. Try again later.'}
