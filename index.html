@@ -583,19 +583,36 @@ async function loadCandleChart(){
  }
 }
 function replyToMarketQuestion(q){
- const p=q.trim().toLowerCase();const fresh=!!feedTime&&Date.now()-feedTime<180000;let lead='Scanner data '+(fresh?'updated '+timeText(feedTime):'is stale or not loaded; tap Refresh for new quotes')+'. ';
- if(/(p&l|profit|balance|portfolio|equity|positions|holdings|cash)/.test(p)){
- const amount=account.positions.length;const txt=account.positions.slice(0,5).map(x=>x.symbol+' '+money(netLiquidation(x)-x.cost)).join(', ');
- return 'Virtual equity '+money(currentEquity())+'; available cash '+money(account.cash)+'; open '+amount+'/'+account.auto.maxPositions+'; net account P&L '+money(currentEquity()-100)+'. '+(txt?'Positions: '+txt+'. ':'No open virtual positions. ')+'Estimates use last available prices and assumed fees.'}
- if(/(auto|manual|stop|start|on|off)/.test(p)&&/(mode|trading|auto|bot)/.test(p)){return 'AUTO '+(account.auto.enabled?'ON':'OFF')+'. Maximum '+account.auto.maxPositions+' paper positions. '+(account.auto.enabled?'Automatic research trades and exits run only while this page is active.':'Manual mode: no automatic scans, entries or exits. Use the top switch to start, not chat.')}
- const t=tokens.find(x=>x.symbol&&p.includes(x.symbol.toLowerCase())&&x.symbol.length>=3)||tokens.find(x=>x.name&&x.name.length>=4&&p.includes(x.name.toLowerCase()));
- if(t){const mr=marketScreen(t),risk=riskFor(t);return lead+t.name+' ('+t.symbol+'): last price $'+t.price.toPrecision(7)+'; pool liquidity '+compact(t.liquidity)+'; 1h volume '+compact(t.volume)+'; 1h change '+pct(t.change)+'; market filters '+(mr.passed?'PASS':'BLOCK')+'; RugCheck research status '+risk.status+'. '+(risk.status==='research'?'Limited automated report; not independently verified.':'Security findings are unavailable or require review.')+' This is not a trade recommendation.'}
- if(/(best|opportunit|buy|top coin|which coin|pick|signal|shortlist|market)/.test(p)){
- if(!tokens.length)return 'No scanner tokens loaded. Tap Refresh on the Scanner tab, then ask again.';
- const top=tokens.filter(t=>marketScreen(t).passed).sort((a,b)=>marketScreen(b).score-marketScreen(a).score).slice(0,5);
- return lead+(top.length?'Tokens passing numeric market filters: '+top.map(t=>t.symbol+' ('+marketScreen(t).score+'/100)').join(', ')+'. ':'None currently pass numeric filters. ')+'These scores are rule-based market screens, NOT safety certification, success probabilities or BUY recommendations.'}
- if(/(rug|scam|safe|risk|audit|security)/.test(p)){return 'Security checks require a token address or symbol. Ask “Risk for DEGEN” or use Scan risk on the Scanner. Missing or stale reports are not considered safe, and no service detects every rug pull.'}
- return 'I can explain current scanner data and your virtual portfolio. Try “Which coins pass filters?”, “Risk for DEGEN?”, “What is my P&L?” or “Is AUTO on?”. This is a local rule-based assistant, not a live Grok/JEV AI model.';
+ const p=String(q||'').toLowerCase().replace(/[?!.,:;]+/g,' ').replace(/\s+/g,' ').trim();
+ const fresh=!!feedTime&&Date.now()-feedTime<180000;
+ const lead='Scanner data '+(fresh?'last updated '+timeText(feedTime):'is stale or not loaded; use Scanner → Refresh')+'. ';
+ if(/\b(p&l|profit|balance|portfolio|equity|positions|holdings|cash)\b/.test(p)){
+  const amount=account.positions.length;
+  const txt=account.positions.slice(0,5).map(x=>x.symbol+' '+money(netLiquidation(x)-x.cost)).join(', ');
+  return 'Virtual equity '+money(currentEquity())+'; available cash '+money(account.cash)+'; open '+amount+'/'+account.auto.maxPositions+'; net account P&L '+money(currentEquity()-100)+'. '+(txt?'Positions: '+txt+'. ':'No open virtual positions. ')+'Values depend on available prices and assumed execution costs.';
+ }
+ if(/\b(auto|manual|bot|mode)\b/.test(p)&&/\b(on|off|start|stop|enable|disable|trading|mode|auto)\b/.test(p)){
+  return 'AUTO '+(account.auto.enabled?'ON':'OFF')+'. Maximum '+account.auto.maxPositions+' paper positions. '+(account.auto.enabled?'Automatic paper decisions run only while the page remains active.':'No automatic entries or exits in manual mode. Use the AUTO switch, not chat, to change modes.');
+ }
+ const asksShortlist=/(\b(coin|coins|token|tokens|pairs|markets|opportunities|candidates)\b.{0,55}\b(pass|passes|passed|passing|filter|filters|qualify|qualified|eligible|best|top|good|buy|score|signal|recommend)\b|\b(pass|passes|passed|passing|filter|filters|qualify|eligible|best|top|good|buy|score|signal|recommend)\b.{0,55}\b(coin|coins|token|tokens|pairs|markets|opportunities|candidates)\b|\b(which|show|list|find)\b.{0,45}\b(coins|tokens|markets|opportunities|candidates)\b|\b(shortlist|scan results|market opportunities)\b)/.test(p);
+ if(asksShortlist){
+  if(!tokens.length)return 'No current scanner tokens have been loaded. Open Scanner → Refresh and ask again.';
+  const passed=tokens.map(t=>({t,screen:marketScreen(t)})).filter(x=>x.screen.passed).sort((a,b)=>b.screen.score-a.screen.score);
+  if(!passed.length)return lead+'No tokens out of '+tokens.length+' scanned currently pass all of your numerical market filters. Do not lower safety controls merely to force a trade.';
+  const top=passed.slice(0,5).map(({t,screen})=>{const risk=riskFor(t);return String(t.symbol||t.name||'UNKNOWN')+' (market '+screen.score+'/100; liquidity '+compact(t.liquidity)+'; 1h volume '+compact(t.volume)+'; security '+String(risk.status||'unverified').toUpperCase()+')'});
+  return lead+passed.length+' of '+tokens.length+' tokens pass the numerical market filters. Highest market scores: '+top.join('; ')+'. These are NOT verified safe tokens or BUY recommendations. Independently check RugCheck and execution risk before even paper-testing an entry.';
+ }
+ const t=tokens.find(x=>x.symbol&&x.symbol.length>=3&&p.includes(x.symbol.toLowerCase()))||tokens.find(x=>x.name&&x.name.length>=4&&p.includes(x.name.toLowerCase()));
+ if(t){
+  const mr=marketScreen(t),risk=riskFor(t);
+  return lead+String(t.name||t.symbol)+' ('+String(t.symbol||'')+'): last USD price '+(Number.isFinite(t.price)?'$'+t.price.toPrecision(7):'unavailable')+'; pool liquidity '+compact(t.liquidity)+'; 1h volume '+compact(t.volume)+'; 1h change '+pct(t.change)+'; numeric filters '+(mr.passed?'PASS':'BLOCK')+'; security check '+String(risk.status||'unverified').toUpperCase()+'. '+(risk.status==='research'?'Limited automated report, not independently audited.':'Security results may be missing, outdated or require investigation.')+' Not a trade recommendation.';
+ }
+ if(/\b(rug|scam|safe|risk|audit|security)\b/.test(p))return 'To inspect security, name a token from the Scanner (for example “Risk for DEGEN”) or tap Scan risk. Missing security data does not mean a token is safe.';
+ if(/\b(market|scanner|trending|momentum|volume|liquidity|signals)\b/.test(p)){
+  if(!tokens.length)return 'No scanner data loaded. Go to Scanner → Refresh, then ask again.';
+  return lead+'The scanner currently contains '+tokens.length+' tokens. Ask “Which tokens pass the filters?” for a ranked numerical shortlist, or name one token for its market details.';
+ }
+ return 'I can explain scanner tokens and virtual paper trades. Try “Which tokens pass the filters?”, “Risk for DEGEN?”, “What is my P&L?” or “Is AUTO on?”. This is a rule-based assistant, not a connected Grok/JEV AI model.';
 }
 function postMarketChat(){
  const inp=el('marketQuestion'),q=inp.value.trim();if(!q)return;
