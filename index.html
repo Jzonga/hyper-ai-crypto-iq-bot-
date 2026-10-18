@@ -163,33 +163,36 @@ function interpretRiskReport(report){
  if(!report||typeof report!=='object'||Array.isArray(report))throw Error('Unrecognized security report');
  const risks=safeArray(report.risks).filter(v=>v&&typeof v==='object');
  const msgs=risks.map(x=>String(x.name||x.description||'Risk flagged').slice(0,150));
- const notes=[];let critical=false;
+ const notes=[...msgs.slice(0,3)],botReasons=[];let critical=false;
  for(const risk of risks){
   const phrase=String((risk.name||'')+' '+(risk.description||'')).toLowerCase();
   const level=String(risk.level||'').toLowerCase();
-  if(/creator.{0,25}rug|rugged tokens|single holder ownership|freeze authority|mint authority|honeypot|blacklist|modifiable sell|unlocked liquidity/.test(phrase)||['danger','critical'].includes(level))critical=true;
+  if(/creator.{0,25}rug|rugged tokens|single holder ownership|freeze authority|mint authority|honeypot|blacklist|modifiable sell|unlocked liquidity/.test(phrase)||['danger','critical'].includes(level)){
+   critical=true;
+   botReasons.push('Critical API finding: '+String(risk.name||risk.description||'unnamed risk').slice(0,95));
+  }
  }
- if(msgs.length)notes.push(...msgs.slice(0,3));
  const token=report.token;
  if(token&&typeof token==='object'){
-  if(token.mintAuthority) {critical=true;notes.push('Mint authority active')}
-  if(token.freezeAuthority) {critical=true;notes.push('Freeze authority active')}
+  if(token.mintAuthority){critical=true;botReasons.push('Active mint authority')}
+  if(token.freezeAuthority){critical=true;botReasons.push('Active freeze authority')}
  }
- const h=Array.isArray(report.topHolders)?report.topHolders:[];
- // A holder can be a vault or exchange; concentration requires manual wallet classification.
- if(h.some(x=>Number.isFinite(n(x.pct))&&n(x.pct)>=20)){critical=true;notes.push('≥20% in one reported holder; classify pool/burn wallets manually')}
+ const holders=Array.isArray(report.topHolders)?report.topHolders:[];
+ // Some large holders represent liquidity-pool vaults/burn accounts. Block for manual review rather than claiming a proven scam.
+ const concentration=holders.filter(x=>Number.isFinite(n(x.pct))&&n(x.pct)>=20);
+ if(concentration.length){critical=true;botReasons.push('Holder ≥20% reported; vault/burn classification not verified')}
  const holderCount=n(report.totalHolders??report.holderCount);
- if(Number.isFinite(holderCount)&&holderCount>0&&holderCount<50){critical=true;notes.push('Fewer than 50 holders')}
+ if(Number.isFinite(holderCount)&&holderCount>0&&holderCount<50){critical=true;botReasons.push('Reported fewer than 50 holders ('+holderCount+')')}
  const score=n(report.score);
- // RugCheck low scores are often better, but different score variants exist: never decide solely from score.
  const hasStructuredRisks=Array.isArray(report.risks);
- if(!hasStructuredRisks)notes.push('Risk findings missing from API response');
+ if(!hasStructuredRisks)notes.push('Named API findings unavailable');
  if(!token||typeof token!=='object')notes.push('Token permissions not fully confirmed');
  const knownAuthorities=token&&Object.prototype.hasOwnProperty.call(token,'mintAuthority')&&Object.prototype.hasOwnProperty.call(token,'freezeAuthority')&&!token.mintAuthority&&!token.freezeAuthority;
- const eligibleResearch=!critical&&hasStructuredRisks&&risks.length===0&&knownAuthorities&&Number.isFinite(holderCount)&&holderCount>=50&&h.length>0&&Number.isFinite(score)&&score<=20;
+ const eligibleResearch=!critical&&hasStructuredRisks&&risks.length===0&&knownAuthorities&&Number.isFinite(holderCount)&&holderCount>=50&&holders.length>0&&Number.isFinite(score)&&score<=20;
  const status=critical?'block':eligibleResearch?'research':hasStructuredRisks?'review':'unverified';
+ notes.push(...botReasons.filter(x=>!notes.includes(x)));
  if(!critical)notes.push('Independent RPC, liquidity lock and creator history not fully verified');
- return {status,notes:notes.slice(0,5),score:Number.isFinite(score)?score:null,reportedCount:risks.length};
+ return {status,notes:notes.slice(0,7),botReasons,score:Number.isFinite(score)?score:null,reportedCount:risks.length};
 }
 async function checkSecurity(addr,{manual=false}={}){
  const token=tokens.find(t=>t.address===addr);
@@ -203,7 +206,10 @@ async function checkSecurity(addr,{manual=false}={}){
   const report=await jsonFetch('https://api.rugcheck.xyz/v1/tokens/'+encodeURIComponent(addr)+'/report');
   const result=interpretRiskReport(report);
   securityCache.set(addr,{...result,at:Date.now()});
-  if(manual)showToast('RugCheck returned '+result.status.toUpperCase()+' · '+result.reportedCount+' flagged risks');
+  if(manual){
+   const reason=result.botReasons?.length?result.botReasons[0]:(result.status==='research'?'Research-only; independent audit missing':result.notes[0]||'Data review required');
+   showToast(token.symbol+' · '+result.status.toUpperCase()+' · '+result.reportedCount+' named API risk entries · '+reason);
+  }
  }catch(err){
   securityCache.set(addr,{status:'unverified',at:Date.now(),notes:['Security API unavailable: '+String(err.message||err).slice(0,75),'Open RugCheck ↗ to investigate manually']});
   securityPausedUntil=Date.now()+Math.min(SECURITY_TTL_MS,60000);
@@ -230,7 +236,7 @@ function renderTokens(){const q=el('searchInput').value.trim().toLowerCase(),fil
    const sc=marketScreen(t),risk=riskFor(t),dec=securityDecision(t),watch=account.watch.includes(t.address),age=ageMin(t.created);
    const canTrade=sc.passed&&risk.status==='research'&&sourceMode!=='sample'&&feedTime&&Date.now()-feedTime<180000;
    const priceText=t.price<.001?t.price.toPrecision(5):t.price.toLocaleString('en-US',{maximumFractionDigits:6});
-   return `<article class="coin"><div class="coin-head"><div><h3>${html(t.name)} <span class="muted">(${html(t.symbol)})</span></h3><div class="address">${html(t.address.slice(0,7))}…${html(t.address.slice(-5))} · ${html(t.source==='dex'?'Boosted listing':'New pool')}</div></div><span class="chip ${dec.cls}">${html(dec.label)}</span></div><div class="coin-stats"><div class="stat"><span>USD price</span>$${html(priceText)}</div><div class="stat"><span>Pool liquidity</span>${html(compact(t.liquidity))}</div><div class="stat"><span>Pool age</span>${html(ageLabel(age))}</div><div class="stat"><span>1h volume</span>${html(compact(t.volume))}</div><div class="stat"><span>1h change</span><b class="${t.change>=0?'up':'down'}">${html(pct(t.change))}</b></div><div class="stat"><span>1h trades</span>${Number.isFinite(t.trades)?t.trades:'—'}</div></div><div class="risknotes ${dec.cls==='pass'?'good':''}">${html(dec.notes.slice(0,3).join(' · '))||'Awaiting risk verification'}</div><div class="coin-bottom"><button class="btn tiny ${watch?'green':'ghost'}" data-watch="${html(t.address)}" title="Watchlist">${watch?'★ Watching':'☆ Watch'}</button><button class="btn tiny" data-chart="${html(t.address)}">Live Chart ▥</button><a href="${html(t.url)}" target="_blank" rel="noopener noreferrer">External ↗</a><a href="https://rugcheck.xyz/tokens/${encodeURIComponent(t.address)}" target="_blank" rel="noopener noreferrer">RugCheck ↗</a><button class="btn tiny" data-risk="${html(t.address)}" ${securityBusy.has(t.address)?'disabled':''}>${risk.status==='checking'?'Checking…':'Scan risk'}</button><button class="btn primary tiny" data-buy="${html(t.address)}" ${canTrade?'':'disabled'} title="Requires market pass and verified security; currently unavailable for incomplete reports">Paper BUY</button></div></article>`
+   return `<article class="coin"><div class="coin-head"><div><h3>${html(t.name)} <span class="muted">(${html(t.symbol)})</span></h3><div class="address">${html(t.address.slice(0,7))}…${html(t.address.slice(-5))} · ${html(t.source==='dex'?'Boosted listing':'New pool')}</div></div><span class="chip ${dec.cls}">${html(dec.label)}</span></div><div class="coin-stats"><div class="stat"><span>USD price</span>$${html(priceText)}</div><div class="stat"><span>Pool liquidity</span>${html(compact(t.liquidity))}</div><div class="stat"><span>Pool age</span>${html(ageLabel(age))}</div><div class="stat"><span>1h volume</span>${html(compact(t.volume))}</div><div class="stat"><span>1h change</span><b class="${t.change>=0?'up':'down'}">${html(pct(t.change))}</b></div><div class="stat"><span>1h trades</span>${Number.isFinite(t.trades)?t.trades:'—'}</div></div><div class="risknotes ${dec.cls==='pass'?'good':''}"><b>MARKET:</b> ${html(sc.issues.length?sc.issues.slice(0,3).join(' · '):'Numeric filters passed')}</div><div class="risknotes"><b>BOT SECURITY CHECK:</b> ${html(String(risk.status||'unverified').toUpperCase())} · ${html(risk.notes.slice(0,3).join(' · ')||'Security report not loaded')} ${Number.isFinite(risk.reportedCount)?' · '+risk.reportedCount+' named RugCheck risk entries':''}</div><div class="coin-bottom"><button class="btn tiny ${watch?'green':'ghost'}" data-watch="${html(t.address)}" title="Watchlist">${watch?'★ Watching':'☆ Watch'}</button><button class="btn tiny" data-chart="${html(t.address)}">Live Chart ▥</button><a href="${html(t.url)}" target="_blank" rel="noopener noreferrer">External ↗</a><a href="https://rugcheck.xyz/tokens/${encodeURIComponent(t.address)}" target="_blank" rel="noopener noreferrer">RugCheck ↗</a><button class="btn tiny" data-risk="${html(t.address)}" ${securityBusy.has(t.address)?'disabled':''}>${risk.status==='checking'?'Checking…':'Scan risk'}</button><button class="btn primary tiny" data-buy="${html(t.address)}" ${canTrade?'':'disabled'} title="Requires market pass and verified security; currently unavailable for incomplete reports">Paper BUY</button></div></article>`
  }).join('')}
 
 function renderPositions(){const out=el('positionList');if(!account.positions.length){out.innerHTML='<div class="empty">No virtual positions yet. Paper buys require fresh market data and a recent low-warning RugCheck research report. An eligible simulation is not a security endorsement. Settings also has a math-only trade test.</div>';return}out.innerHTML=account.positions.map(p=>{const unreal=netLiquidation(p)-p.cost;const chg=unreal/p.cost*100;const isFresh=p.priceAt&&Date.now()-p.priceAt<180000;return `<div class="position"><div><strong>${html(p.name)} (${html(p.symbol)})</strong> <span class="chip">${isFresh?'PRICE RECENT':'PRICE STALE'}</span><div class="mini">Invested ${money(p.cost)} · Qty ${html(p.qty.toPrecision(6))}<br>Entry $${html(p.entryPrice.toPrecision(6))} · Last $${html((p.lastPrice||p.entryPrice).toPrecision(6))}<br>Paper SL −${html(p.stop)}% / TP +${html(p.take)}%</div></div><div class="right"><strong class="${unreal<0?'down':'up'}">${unreal>=0?'+':''}${money(unreal)} (${pct(chg)})</strong><div class="mini">Est. exit value ${money(netLiquidation(p))}</div><button class="btn danger tiny" style="margin-top:7px" data-sell="${html(p.id)}" ${isFresh?'':'disabled'}>Paper SELL</button></div></div>`}).join('')}
