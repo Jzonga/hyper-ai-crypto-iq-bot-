@@ -60,7 +60,7 @@
 <div class="cards" style="grid-template-columns:repeat(2,1fr)"><div class="card"><div class="label">Signal candidates</div><div class="val" id="autoCandidates">0</div><div class="under">Fresh, risk-checked, ranked</div></div><div class="card"><div class="label">Auto positions limit</div><div class="val" id="autoSlots">0 / 3</div><div class="under">Manual trades also count</div></div></div>
 <div class="setting" style="margin:12px 0"><label for="autoMax">Maximum simultaneous tokens (2–5)</label><select class="field" id="autoMax"><option value="2">2 positions</option><option value="3">3 positions</option><option value="4">4 positions</option><option value="5">5 positions</option></select></div>
 <div class="settings-grid"><div class="setting"><label for="autoScore">Minimum research score (60–95)</label><input class="field" type="number" min="60" max="95" id="autoScore" step="1"></div><div class="setting"><label for="autoPartialAt">Partial profit trigger (%)</label><input class="field" type="number" min="5" max="100" id="autoPartialAt" step="1"></div><div class="setting"><label for="autoPartialSize">Close portion at trigger (%)</label><input class="field" type="number" min="10" max="90" id="autoPartialSize" step="5"></div><div class="setting"><label for="autoTrail">Trailing exit after partial (%)</label><input class="field" type="number" min="2" max="50" id="autoTrail" step="1"></div><div class="setting"><label for="autoMaxHours">Max simulated holding time (hours)</label><input class="field" type="number" min="1" max="336" id="autoMaxHours" step="1"></div><div class="setting"><label for="autoLoss">Daily realized loss halt (% of starting day equity)</label><input class="field" type="number" min="1" max="25" id="autoLoss" step="1"></div></div>
-<p class="fine">Current Settings → Paper trading controls determine per-position allocation, stop loss and estimated fees. Auto IQ enters no more than one new trade per refresh cycle, and enforces a 2-hour token cooldown. A market score measures filters and observed activity, <strong>not</strong> the probability of profit.</p>
+<p class="fine">Current Settings → Paper trading controls determine per-position allocation, stop loss and estimated fees. Auto IQ enters no more than one new trade per refresh cycle, and enforces a 2-hour token cooldown. The 5m technical gate examines closed candles (EMA9/21, RSI14, ATR and relative volume). A market score measures filters and observed activity, <strong>not</strong> the probability of profit.</p>
 <button id="autoSave" class="btn green" type="button">Save Auto IQ settings</button>
 <div class="notice" id="autoStatus" style="margin-top:12px">Auto mode is OFF. Manual paper trading remains available.</div></div>
 <div class="section"><div class="titlebar"><h2>Live IQ decisions</h2><span class="chip">Rule-based · research only</span></div><div id="autoDecisions" class="rows"></div></div>
@@ -112,10 +112,10 @@ const API_D='https://api.dexscreener.com';
 const REFRESH_MS=60000,MAX_POSITION_COUNT=5,FEE_RATE=.003,POOL_PAGES=4,SECURITY_TTL_MS=240000,SECURITY_AUTO_MAX=4;
 const STABLE_SYMBOLS=new Set(['SOL','WSOL','USDC','USDT','USDS','WETH','WBTC','JUPSOL','MSOL','JITOSOL']);
 const defaults={liquidity:10000,volume:1000,minAge:5,maxAge:24,allowOlder:true,minTrades:10,maxPump:100,allocation:5,slippage:1.0,stop:15,take:30};
-const autoDefaults={enabled:false,maxPositions:3,minScore:76,partialAt:20,partialSize:50,trail:12,maxHours:72,dailyLoss:5,day:'',dayEquity:100,lastEntries:{}};
+const autoDefaults={enabled:false,maxPositions:3,minScore:76,partialAt:20,partialSize:50,trail:12,maxHours:72,dailyLoss:5,day:'',dayEquity:100,lastEntries:{},lastGlobalEntry:0};
 const fresh=()=>({cash:100,positions:[],history:[],watch:[],settings:{...defaults},auto:{...autoDefaults},events:[]});
 let account=null,tokens=[],sourceName='GeckoTerminal',sourceMode='none',feedTime=0,fetchBusy=false,preview=false,selectedToken=null,lastError='';
-let tab='scanner',securityCache=new Map(),securityPausedUntil=0,securityBusy=new Set(),autoBusy=false,heldQuoteTask=null;
+let tab='scanner',securityCache=new Map(),securityPausedUntil=0,securityBusy=new Set(),autoBusy=false,heldQuoteTask=null,technicalBusy=new Set(),technicalCache=new Map();
 const el=id=>document.getElementById(id);
 const n=v=>Number.isFinite(Number(v))?Number(v):NaN;
 const valid=v=>Number.isFinite(v)&&v>0;
@@ -332,9 +332,9 @@ function renderTokens(){const q=el('searchInput').value.trim().toLowerCase(),fil
  if(!rows.length){el('tokenList').innerHTML='<div class="empty" style="grid-column:1/-1">'+(tokens.length?'No results match your filters. Try “All market results” or change Settings.':lastError?'Live data unavailable: '+html(lastError)+'. Try Refresh; if it continues, use Chrome and deploy via HTTPS.':'No live coins loaded yet. Tap Refresh to try the public API.')+'</div>';return}
    el('tokenList').innerHTML=rows.map(t=>{
    const sc=marketScreen(t),risk=riskFor(t),dec=securityDecision(t),watch=account.watch.includes(t.address),age=ageMin(t.created);
-   const canTrade=sc.passed&&risk.status==='research'&&sourceMode!=='sample'&&feedTime&&Date.now()-feedTime<180000;
+   const tech=technicalFor(t);const canTrade=sc.passed&&risk.status==='research'&&tech?.ok&&tech.passed&&sourceMode!=='sample'&&feedTime&&Date.now()-feedTime<180000;
    const priceText=t.price<.001?t.price.toPrecision(5):t.price.toLocaleString('en-US',{maximumFractionDigits:6});
-   return `<article class="coin"><div class="coin-head"><div><h3>${html(t.name)} <span class="muted">(${html(t.symbol)})</span></h3><div class="address">${html(t.address.slice(0,7))}…${html(t.address.slice(-5))} · ${html(t.source==='dex'?'Boosted listing':t.discovery==='older'?'Established pool':t.discovery==='trending'?'Trending pool':'New pool')}</div></div><span class="chip ${dec.cls}">${html(dec.label)}</span></div><div class="coin-stats"><div class="stat"><span>USD price</span>$${html(priceText)}</div><div class="stat"><span>Pool liquidity</span>${html(compact(t.liquidity))}</div><div class="stat"><span>Pool age</span>${html(ageLabel(age))}</div><div class="stat"><span>1h volume</span>${html(compact(t.volume))}</div><div class="stat"><span>1h change</span><b class="${t.change>=0?'up':'down'}">${html(pct(t.change))}</b></div><div class="stat"><span>1h trades</span>${Number.isFinite(t.trades)?t.trades:'—'}</div></div><div class="risknotes ${dec.cls==='pass'?'good':''}"><b>MARKET:</b> ${html(sc.issues.length?sc.issues.slice(0,3).join(' · '):'Numeric filters passed')}</div><div class="risknotes"><b>BOT SECURITY CHECK:</b> ${html(String(risk.status||'unverified').toUpperCase())} · ${html(risk.notes.slice(0,3).join(' · ')||'Security report not loaded')} ${Number.isFinite(risk.reportedCount)?' · '+risk.reportedCount+' named RugCheck risk entries':''}</div><div class="coin-bottom"><button class="btn tiny ${watch?'green':'ghost'}" data-watch="${html(t.address)}" title="Watchlist">${watch?'★ Watching':'☆ Watch'}</button><button class="btn tiny" data-chart="${html(t.address)}">Live Chart ▥</button><a href="${html(t.url)}" target="_blank" rel="noopener noreferrer">External ↗</a><a href="https://rugcheck.xyz/tokens/${encodeURIComponent(t.address)}" target="_blank" rel="noopener noreferrer">RugCheck ↗</a><button class="btn tiny" data-risk="${html(t.address)}" ${securityBusy.has(t.address)?'disabled':''}>${risk.status==='checking'?'Checking…':'Scan risk'}</button><button class="btn primary tiny" data-buy="${html(t.address)}" ${canTrade?'':'disabled'} title="Requires market pass and verified security; currently unavailable for incomplete reports">Paper BUY</button></div></article>`
+   return `<article class="coin"><div class="coin-head"><div><h3>${html(t.name)} <span class="muted">(${html(t.symbol)})</span></h3><div class="address">${html(t.address.slice(0,7))}…${html(t.address.slice(-5))} · ${html(t.source==='dex'?'Boosted listing':t.discovery==='older'?'Established pool':t.discovery==='trending'?'Trending pool':'New pool')}</div></div><span class="chip ${dec.cls}">${html(dec.label)}</span></div><div class="coin-stats"><div class="stat"><span>USD price</span>$${html(priceText)}</div><div class="stat"><span>Pool liquidity</span>${html(compact(t.liquidity))}</div><div class="stat"><span>Pool age</span>${html(ageLabel(age))}</div><div class="stat"><span>1h volume</span>${html(compact(t.volume))}</div><div class="stat"><span>1h change</span><b class="${t.change>=0?'up':'down'}">${html(pct(t.change))}</b></div><div class="stat"><span>1h trades</span>${Number.isFinite(t.trades)?t.trades:'—'}</div></div><div class="risknotes ${dec.cls==='pass'?'good':''}"><b>MARKET:</b> ${html(sc.issues.length?sc.issues.slice(0,3).join(' · '):'Numeric filters passed')}</div><div class="risknotes"><b>BOT SECURITY CHECK:</b> ${html(String(risk.status||'unverified').toUpperCase())} · ${html(risk.notes.slice(0,3).join(' · ')||'Security report not loaded')} ${Number.isFinite(risk.reportedCount)?' · '+risk.reportedCount+' named RugCheck risk entries':''}</div><div class="risknotes"><b>5M TECHNICAL:</b> ${html(tech?.why||"Not checked")}${tech?.ok?" · RSI "+tech.rsi.toFixed(1)+" · ATR "+tech.atrPct.toFixed(1)+"%":""}</div><div class="coin-bottom"><button class="btn tiny ${watch?'green':'ghost'}" data-watch="${html(t.address)}" title="Watchlist">${watch?'★ Watching':'☆ Watch'}</button><button class="btn tiny" data-chart="${html(t.address)}">Live Chart ▥</button><a href="${html(t.url)}" target="_blank" rel="noopener noreferrer">External ↗</a><a href="https://rugcheck.xyz/tokens/${encodeURIComponent(t.address)}" target="_blank" rel="noopener noreferrer">RugCheck ↗</a><button class="btn tiny" data-tech="${html(t.address)}">5m Analyze</button><button class="btn tiny" data-risk="${html(t.address)}" ${securityBusy.has(t.address)?'disabled':''}>${risk.status==='checking'?'Checking…':'Scan risk'}</button><button class="btn primary tiny" data-buy="${html(t.address)}" ${canTrade?'':'disabled'} title="Requires market pass and verified security; currently unavailable for incomplete reports">Paper BUY</button></div></article>`
  }).join('')}
 
 function renderPositions(){const out=el('positionList');if(!account.positions.length){out.innerHTML='<div class="empty">No virtual positions yet. Paper buys require fresh market data and a recent low-warning RugCheck research report. An eligible simulation is not a security endorsement. Settings also has a math-only trade test.</div>';return}out.innerHTML=account.positions.map(p=>{const unreal=netLiquidation(p)-p.cost;const chg=unreal/p.cost*100;const isFresh=p.priceAt&&Date.now()-p.priceAt<150000;return `<div class="position"><div><strong>${html(p.name)} (${html(p.symbol)})</strong> <span class="chip">${isFresh?'PRICE RECENT':'PRICE STALE'}</span><div class="mini">Invested ${money(p.cost)} · Qty ${html(p.qty.toPrecision(6))}<br>Entry $${html(p.entryPrice.toPrecision(6))} · Last $${html((p.lastPrice||p.entryPrice).toPrecision(6))}<br>Paper SL −${html(p.stop)}% / TP +${html(p.take)}% · Quote ${p.priceAt?Math.max(0,Math.round((Date.now()-p.priceAt)/1000))+'s ago':'not fetched'}${isFresh?'':' · Refresh Held Prices'}</div></div><div class="right"><strong class="${unreal<0?'down':'up'}">${unreal>=0?'+':''}${money(unreal)} (${pct(chg)})</strong><div class="mini">Est. exit value ${money(netLiquidation(p))}</div><button class="btn danger tiny" style="margin-top:7px" data-sell="${html(p.id)}" ${isFresh?'':'disabled'}>Paper SELL</button></div></div>`}).join('')}
@@ -349,6 +349,7 @@ function buyPaper(t,usd,reason='Manual paper entry'){
  if(reason.startsWith('Auto IQ')&&!account.auto.enabled)return false;
  if(!t||!marketScreen(t).passed||riskFor(t).status!=='research'||sourceMode==='sample'||!feedTime||Date.now()-feedTime>=150000)return false;
  if(account.positions.some(p=>p.address===t.address)||account.positions.length>=account.auto.maxPositions||!valid(t.price)||usd<2||usd>limitUsd()+1e-6||usd>account.cash||usd>t.liquidity*.005)return false;
+ const technical=technicalFor(t);if(!technical?.ok||!technical.passed)return false;
  const slip=estimateSlip(usd,t.liquidity),executionPrice=t.price*(1+slip),fee=usd*FEE_RATE,qty=(usd-fee)/executionPrice;
  if(!valid(qty))return false;
  const id='p'+Date.now()+'_'+Math.floor(Math.random()*10000);
@@ -438,6 +439,56 @@ function checkPaperExits(){
  }
 }
 
+
+const TECH_MAX_PER_CYCLE=3,TECH_TTL_MS=240000;
+function technicalFor(t){const c=technicalCache.get(t.pool);return c&&Date.now()-c.at<TECH_TTL_MS?c:null}
+function computeTechnical(ohlcv){
+ if(!Array.isArray(ohlcv))return {ok:false,why:'Missing OHLCV data'};
+ const now=Date.now();
+ const b=ohlcv.map(x=>x.map(Number)).filter(x=>x.length>=6&&x.slice(0,6).every(Number.isFinite)&&x[1]>0&&x[2]>=Math.max(x[1],x[4])&&x[3]<=Math.min(x[1],x[4])&&x[5]>=0&&x[0]*1000+300000<=now)
+ .sort((x,y)=>x[0]-y[0]);
+ const bars=[...new Map(b.map(x=>[x[0],x])).values()];
+ if(bars.length<30)return {ok:false,why:'Need 30 closed 5m candles; only '+bars.length+' available'};
+ const last=bars[bars.length-1];
+ if(now-(last[0]*1000+300000)>1200000)return {ok:false,why:'Last closed candle over 20 minutes old'};
+ const closes=bars.map(x=>x[4]);
+ function ema(n){let x=closes.slice(0,n).reduce((a,b)=>a+b,0)/n;for(let i=n;i<closes.length;i++)x+=2/(n+1)*(closes[i]-x);return x}
+ const ema9=ema(9),ema21=ema(21);
+ let gain=0,loss=0;for(let i=1;i<=14;i++){const v=closes[i]-closes[i-1];gain+=Math.max(0,v);loss+=Math.max(0,-v)}
+ gain/=14;loss/=14;
+ for(let i=15;i<closes.length;i++){const d=closes[i]-closes[i-1];gain=(gain*13+Math.max(0,d))/14;loss=(loss*13+Math.max(0,-d))/14}
+ const rsi=loss===0?(gain===0?50:100):100-100/(1+gain/loss);
+ const trs=bars.slice(-14).map((x,i)=>{const prev=bars[bars.length-14+i-1]?.[4]??x[1];return Math.max(x[2]-x[3],Math.abs(x[2]-prev),Math.abs(x[3]-prev))});
+ const atr=trs.reduce((a,b)=>a+b,0)/14,atrPct=atr/last[4]*100;
+ const activeVol=bars.slice(-5).reduce((a,b)=>a+b[5],0)/5;
+ const prevVol=bars.slice(-25,-5).reduce((a,b)=>a+b[5],0)/20;
+ const relativeVolume=prevVol>0?activeVol/prevVol:0;
+ const trendUp=last[4]>ema9&&ema9>ema21;
+ const passed=trendUp&&rsi>=45&&rsi<=72&&atrPct>=.08&&atrPct<=22&&relativeVolume>=.5;
+ const why=!trendUp?'EMA9/EMA21 trend not bullish':rsi>72?'5m RSI overbought':rsi<45?'Weak 5m RSI':atrPct>22?'Excessive 5m volatility':atrPct<.08?'Little 5m movement':relativeVolume<.5?'Volume activity too weak':'Bullish EMA structure, controlled RSI and active volume';
+ return {ok:true,passed,ema9,ema21,rsi,atrPct,relativeVolume,close:last[4],bars:bars.length,closeTime:last[0]*1000,why};
+}
+async function checkTechnical(t,{manual=false}={}){
+ if(!t?.pool||technicalBusy.has(t.pool))return;
+ const old=technicalFor(t);if(old&&!manual)return old;
+ technicalBusy.add(t.pool);
+ try{
+  const response=await jsonFetch(API_G+'/networks/solana/pools/'+encodeURIComponent(t.pool)+'/ohlcv/minute?aggregate=5&limit=80&currency=usd&token='+encodeURIComponent(t.address));
+  const data=computeTechnical(response?.data?.attributes?.ohlcv_list);
+  const result={...data,at:Date.now()};technicalCache.set(t.pool,result);
+  if(manual)showToast(t.symbol+' technical: '+(result.ok?(result.passed?'5m confirmation PASS':'WAIT'):'INSUFFICIENT DATA')+' · '+result.why);
+  renderTokens();drawAuto();return result;
+ }catch(err){
+  const result={ok:false,passed:false,at:Date.now(),why:'5m OHLCV request failed: '+String(err.message||err).slice(0,55)};
+  technicalCache.set(t.pool,result);
+  if(manual)showToast(result.why);
+  return result;
+ }finally{technicalBusy.delete(t.pool)}
+}
+async function checkTechnicalCandidates(){
+ const ranked=tokens.filter(t=>marketScreen(t).passed&&riskFor(t).status==='research').sort((a,b)=>marketScreen(b).score-marketScreen(a).score);
+ for(const t of ranked.slice(0,TECH_MAX_PER_CYCLE)){if(!account.auto.enabled||document.hidden)break;await checkTechnical(t)}
+}
 function iqSignal(t){
  const sc=marketScreen(t),r=riskFor(t);if(!sc.passed)return {action:'AVOID',score:0,why:sc.issues[0]||'Market filter failed'};
  if(r.status==='block')return {action:'AVOID',score:0,why:'Flagged contract or holder risks'};
@@ -455,8 +506,12 @@ function iqSignal(t){
  score+=age>=10&&age<=1440?4:age>1440?3:0;
  score=Math.max(0,Math.min(95,Math.round(score)));
  if(ratio<.45||t.change< -8||t.change>60||turnover>5)return {action:'WAIT',score,why:'Momentum/volume imbalance; avoid chasing or falling prices'};
- if(account.positions.some(p=>p.address===t.address))return {action:'HOLD',score,why:'Already tracked as an open virtual position'};
- return {action:score>=account.auto.minScore?'PAPER BUY':'WAIT',score,why:'Rule-based liquidity, activity, direction and risk research (NOT a success probability)'};
+ if(account.positions.some(p=>p.address===t.address))return {action:'HOLD',score,why:'Already tracked as an open virtual position; exit rules use refreshed holding quotes'};
+ const tech=technicalFor(t);
+ if(!tech||!tech.ok)return {action:'WAIT',score,why:tech?.why||'Waiting for 5-minute candle analysis'};
+ if(!tech.passed)return {action:'WAIT',score,why:'5m technical gate: '+tech.why+' · RSI '+tech.rsi.toFixed(1)};
+ score=Math.min(95,score+5);
+ return {action:score>=account.auto.minScore?'PAPER BUY':'WAIT',score,why:'5m EMA9/21 bullish · RSI '+tech.rsi.toFixed(1)+' · ATR '+tech.atrPct.toFixed(1)+'% · Relative volume '+tech.relativeVolume.toFixed(2)+'×; rule-based, NOT predictive'};
 }
 function dayKey(){return new Date().toLocaleDateString('en-CA');}
 function ensureDay(){const d=dayKey();if(account.auto.day!==d){account.auto.day=d;account.auto.dayEquity=currentEquity();save()}}
@@ -482,6 +537,7 @@ async function autoCycle({manual=false}={}){
    if(!account.auto.enabled||document.hidden)return;
    if(dailyHalt()){eventLog('AUTO IQ PAUSED: daily realized-loss limit');return}
    if(account.positions.length>=account.auto.maxPositions)return;
+   if(Date.now()-(account.auto.lastGlobalEntry||0)<90000)return;
    // At most ONE new position per scan, not a blast of simultaneous simulated orders.
    const ranked=tokens.map(t=>({t,s:iqSignal(t)})).filter(x=>x.s.action==='PAPER BUY').sort((a,b)=>b.s.score-a.s.score);
    for(const {t,s} of ranked){
@@ -490,20 +546,20 @@ async function autoCycle({manual=false}={}){
      const left=account.auto.maxPositions-account.positions.length;
      const usd=Math.min(limitUsd(),account.cash/Math.max(1,left),t.liquidity*.005);
      if(usd<2)break;
-     if(buyPaper(t,Math.floor(usd*100)/100,'Auto IQ research score '+s.score+'/95')){eventLog('AUTO IQ ENTRY: '+t.symbol+' · '+s.score+'/95; research only');break}
+     if(buyPaper(t,Math.floor(usd*100)/100,'Auto IQ research score '+s.score+'/95')){account.auto.lastGlobalEntry=Date.now();save();eventLog('AUTO IQ ENTRY: '+t.symbol+' · '+s.score+'/95; research only');break}
    }
  }finally{autoBusy=false;drawAuto()}
 }
 function applyAutoUI(){const a=account.auto;for(const [k,id] of Object.entries({maxPositions:'autoMax',minScore:'autoScore',partialAt:'autoPartialAt',partialSize:'autoPartialSize',trail:'autoTrail',maxHours:'autoMaxHours',dailyLoss:'autoLoss'}))el(id).value=a[k]}
 function saveAutoSettings(){const fields={maxPositions:['autoMax',2,5],minScore:['autoScore',60,95],partialAt:['autoPartialAt',5,100],partialSize:['autoPartialSize',10,90],trail:['autoTrail',2,50],maxHours:['autoMaxHours',1,336],dailyLoss:['autoLoss',1,25]};for(const [key,[id,lo,hi]] of Object.entries(fields)){const value=n(el(id).value);if(!Number.isFinite(value)||value<lo||value>hi)throw Error('Invalid '+key);account.auto[key]=value}
  if(account.positions.length>account.auto.maxPositions)throw Error('Cannot set fewer positions than already open');save();draw();}
-async function refresh(){if(fetchBusy)return;if(document.hidden&&feedTime)return;fetchBusy=true;el('refreshButton').disabled=true;el('refreshButton').textContent='Loading…';status('CONNECTING','');let primaryErr='';try{let rows=[];try{rows=await loadGecko();if(!rows.length)throw Error('No pool records with usable token prices');sourceMode='gecko';sourceName='GeckoTerminal new + established pools'}catch(e){primaryErr=e.message;rows=await loadDex();if(!rows.length)throw Error('Fallback contains no priced token pairs');sourceMode='dex';sourceName='DEX Screener boosted tokens'}tokens=rows;feedTime=Date.now();preview=false;lastError='';el('feedInfo').textContent=(sourceMode==='dex'?'Fallback: promoted/boosted tokens; NOT necessarily new launches.':'Discovered new, trending and established Solana pools; pool listings are not necessarily memecoins.')+' Last update '+timeText(feedTime)+'.';el('sourceChip').textContent=sourceMode==='gecko'?'GeckoTerminal · MIXED':'DEX Screener · BOOSTED';status('LIVE FEED','live');if(primaryErr)eventLog('Gecko feed unavailable ('+primaryErr+'); using promoted-token fallback');else eventLog('Gecko mixed-age Solana scan completed: '+rows.length+' candidate pools');await updateHeldQuotes();if(account.auto.enabled)checkPaperExits()}catch(e){lastError=e.message;status('FEED ERROR','fail');el('feedInfo').textContent='Public feed unavailable. '+lastError+'. Previously loaded quotes are not guaranteed current.';eventLog('Live market refresh failed: '+lastError);if(!tokens.length)el('sourceChip').textContent='NO LIVE DATA';}finally{fetchBusy=false;el('refreshButton').disabled=false;el('refreshButton').textContent='↻ Refresh';draw();if(account.auto.enabled&&sourceMode!=='none')void checkPrioritySecurity().then(()=>{if(account.auto.enabled)return autoCycle()}).catch(e=>{if(account.auto.enabled)eventLog('Security/auto cycle error: '+String(e.message||e))})}}
+async function refresh(){if(fetchBusy)return;if(document.hidden&&feedTime)return;fetchBusy=true;el('refreshButton').disabled=true;el('refreshButton').textContent='Loading…';status('CONNECTING','');let primaryErr='';try{let rows=[];try{rows=await loadGecko();if(!rows.length)throw Error('No pool records with usable token prices');sourceMode='gecko';sourceName='GeckoTerminal new + established pools'}catch(e){primaryErr=e.message;rows=await loadDex();if(!rows.length)throw Error('Fallback contains no priced token pairs');sourceMode='dex';sourceName='DEX Screener boosted tokens'}tokens=rows;feedTime=Date.now();preview=false;lastError='';el('feedInfo').textContent=(sourceMode==='dex'?'Fallback: promoted/boosted tokens; NOT necessarily new launches.':'Discovered new, trending and established Solana pools; pool listings are not necessarily memecoins.')+' Last update '+timeText(feedTime)+'.';el('sourceChip').textContent=sourceMode==='gecko'?'GeckoTerminal · MIXED':'DEX Screener · BOOSTED';status('LIVE FEED','live');if(primaryErr)eventLog('Gecko feed unavailable ('+primaryErr+'); using promoted-token fallback');else eventLog('Gecko mixed-age Solana scan completed: '+rows.length+' candidate pools');await updateHeldQuotes();if(account.auto.enabled)checkPaperExits()}catch(e){lastError=e.message;status('FEED ERROR','fail');el('feedInfo').textContent='Public feed unavailable. '+lastError+'. Previously loaded quotes are not guaranteed current.';eventLog('Live market refresh failed: '+lastError);if(!tokens.length)el('sourceChip').textContent='NO LIVE DATA';}finally{fetchBusy=false;el('refreshButton').disabled=false;el('refreshButton').textContent='↻ Refresh';draw();if(account.auto.enabled&&sourceMode!=='none')void checkPrioritySecurity().then(()=>{if(account.auto.enabled)return checkTechnicalCandidates().then(()=>autoCycle())}).catch(e=>{if(account.auto.enabled)eventLog('Security/auto cycle error: '+String(e.message||e))})}}
 function exportCSV(){if(!account.history.length){showToast('No paper trades to export');return}const headers=['timestamp','side','symbol','tokenAddress','usd','quantity','realizedPnl','reason'];const lines=[headers.join(',')];for(const h of account.history){const cells=[new Date(h.at).toISOString(),h.side,h.symbol,h.address,h.usd,h.qty,h.pnl??'',h.reason];lines.push(cells.map((x,i)=>{let v=String(x??'');if((i===2||i===3||i===7)&&/^[\s]*[=+\-@]/.test(v))v="'"+v;return '"'+v.replace(/"/g,'""')+'"'}).join(','))}const blob=new Blob([lines.join('\r\n')],{type:'text/csv;charset=utf-8;'});const url=URL.createObjectURL(blob);const a=document.createElement('a');a.href=url;a.download='hyper_ai_paper_trades.csv';document.body.append(a);a.click();a.remove();setTimeout(()=>URL.revokeObjectURL(url),1500)}
 function wire(){document.querySelectorAll('.nav button').forEach(b=>b.addEventListener('click',()=>{tab=b.dataset.tab;document.querySelectorAll('.nav button').forEach(x=>x.classList.toggle('on',x.dataset.tab===tab));document.querySelectorAll('.pane').forEach(x=>x.classList.toggle('on',x.id===tab));draw()}));for(const id of ['searchInput','scannerUniverse','filterMode','sortMode'])el(id).addEventListener('input',renderTokens);el('refreshButton').addEventListener('click',()=>refresh());el('refreshHeldQuotes').addEventListener('click',()=>void updateHeldQuotes({manual:true}));
 el('backupPaperAccount').addEventListener('click',backupPaperAccount);
 el('restorePaperAccount').addEventListener('click',()=>el('paperBackupInput').click());
 el('paperBackupInput').addEventListener('change',e=>{const file=e.target.files?.[0];void importPaperBackup(file).finally(()=>{e.target.value=''})});
-el('recoverLocalAccount').addEventListener('click',recoverLocalSnapshot);el('tokenList').addEventListener('click',event=>{const b=event.target.closest('button');if(!b)return;if(b.dataset.watch){const address=b.dataset.watch;account.watch=account.watch.includes(address)?account.watch.filter(v=>v!==address):[...account.watch,address];save();renderTokens()}else if(b.dataset.risk)checkSecurity(b.dataset.risk,{manual:true});else if(b.dataset.buy)openBuy(b.dataset.buy)});el('positionList').addEventListener('click',event=>{const b=event.target.closest('button[data-sell]');if(b)executeSell(b.dataset.sell)});el('cancelTrade').addEventListener('click',closeModal);el('modalBack').addEventListener('click',event=>{if(event.target===el('modalBack'))closeModal()});document.addEventListener('keydown',e=>{if(e.key==='Escape')closeModal()});el('confirmTrade').addEventListener('click',confirmBuy);el('saveSettings').addEventListener('click',()=>{try{account.settings=readSettings();save();draw();showToast('Market and risk settings saved')}catch(e){showToast(e.message)}});el('resetAccount').addEventListener('click',()=>{if(!confirm('Reset virtual cash to $100 and permanently clear all paper positions and history?'))return;const savedSettings=account.settings;account=fresh();account.settings=savedSettings;try{localStorage.removeItem(RECOVERY_KEY)}catch{}save();eventLog('Paper account reset to $100.00');draw();showToast('Virtual account reset')});el('autoSave').addEventListener('click',()=>{try{saveAutoSettings();showToast('Auto IQ settings saved')}catch(e){showToast(e.message)}});
+el('recoverLocalAccount').addEventListener('click',recoverLocalSnapshot);el('tokenList').addEventListener('click',event=>{const b=event.target.closest('button');if(!b)return;if(b.dataset.watch){const address=b.dataset.watch;account.watch=account.watch.includes(address)?account.watch.filter(v=>v!==address):[...account.watch,address];save();renderTokens()}else if(b.dataset.risk)checkSecurity(b.dataset.risk,{manual:true});else if(b.dataset.tech){const candidate=tokens.find(t=>t.address===b.dataset.tech);if(candidate)void checkTechnical(candidate,{manual:true})}else if(b.dataset.buy)openBuy(b.dataset.buy)});el('positionList').addEventListener('click',event=>{const b=event.target.closest('button[data-sell]');if(b)executeSell(b.dataset.sell)});el('cancelTrade').addEventListener('click',closeModal);el('modalBack').addEventListener('click',event=>{if(event.target===el('modalBack'))closeModal()});document.addEventListener('keydown',e=>{if(e.key==='Escape')closeModal()});el('confirmTrade').addEventListener('click',confirmBuy);el('saveSettings').addEventListener('click',()=>{try{account.settings=readSettings();save();draw();showToast('Market and risk settings saved')}catch(e){showToast(e.message)}});el('resetAccount').addEventListener('click',()=>{if(!confirm('Reset virtual cash to $100 and permanently clear all paper positions and history?'))return;const savedSettings=account.settings;account=fresh();account.settings=savedSettings;try{localStorage.removeItem(RECOVERY_KEY)}catch{}save();eventLog('Paper account reset to $100.00');draw();showToast('Virtual account reset')});el('autoSave').addEventListener('click',()=>{try{saveAutoSettings();showToast('Auto IQ settings saved')}catch(e){showToast(e.message)}});
  function toggleAutoMode(){
   if(account.auto.enabled){account.auto.enabled=false;save();draw();showToast('AUTO OFF. Manual mode: no automatic trades, scans or exits.');return}
   try{saveAutoSettings()}catch(e){showToast(e.message);return}
