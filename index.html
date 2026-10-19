@@ -5,6 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
 <meta name="theme-color" content="#0b0e18" />
 <script defer src="https://unpkg.com/lightweight-charts@5.0.0/dist/lightweight-charts.standalone.production.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
 <meta name="mobile-web-app-capable" content="yes" />
 <meta name="apple-mobile-web-app-capable" content="yes" />
 <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
@@ -96,7 +97,26 @@
 </div>
 <div id="paperAccountStatus" class="notice">Checking local account storage...</div>
 <p class="fine">Restoring always starts AUTO OFF, keeps original historical trade times, and replaces the active paper account only with your confirmation. An empty history cannot be reconstructed from GitHub or token prices alone.</p>
-</div><div class="section"><h2 style="font-size:15px;margin-top:0">Data and privacy</h2><div class="notice">No real account connection. No wallet keys or passwords. Portfolio, settings, watchlist and trades are saved in this browser's local storage on this device only. Clearing site data or switching browsers removes your saved account. There is no backend, alert service, or background trading. Auto IQ only runs when AUTO is ON and the browser is active; when OFF it does not scan or close positions. It never runs in background.</div><p class="fine">Feeds: <a target="_blank" rel="noopener noreferrer" href="https://apiguide.geckoterminal.com/">GeckoTerminal</a> and <a target="_blank" rel="noopener noreferrer" href="https://docs.dexscreener.com/api/reference">DEX Screener</a>. Best-effort reports: <a href="https://api.rugcheck.xyz/swagger/index.html" target="_blank" rel="noopener noreferrer">RugCheck API</a> · <a href="https://rugcheck.xyz/" target="_blank" rel="noopener noreferrer">RugCheck manual review</a>.</p></div></section>
+</div><div class="section">
+<h2 style="font-size:16px;margin-top:0">Secure cloud paper account · Supabase</h2>
+<p class="fine">OPTIONAL — Free-tier cloud storage requires your own Supabase project, the SQL setup in CLOUD_SETUP.md and an email sign-in. Your existing local virtual account remains usable without cloud. Only your public project URL and publishable key go here; NEVER use a service-role/secret key.</p>
+<div class="settings-grid">
+<div class="setting"><label for="cloudUrl">Supabase project URL</label><input class="field" id="cloudUrl" type="url" placeholder="https://xxxx.supabase.co" autocomplete="off"></div>
+<div class="setting"><label for="cloudKey">Publishable key (sb_publishable_...)</label><input class="field" id="cloudKey" type="text" placeholder="sb_publishable_..." autocomplete="off"></div>
+<div class="setting"><label for="cloudEmail">Your account email for magic-link sign-in</label><input class="field" id="cloudEmail" type="email" placeholder="you@example.com" autocomplete="email"></div>
+</div>
+<div class="controls" style="margin:12px 0;flex-wrap:wrap">
+<button class="btn" id="cloudConnect" type="button">1. Save project & connect</button>
+<button class="btn" id="cloudSignIn" type="button">2. Email me sign-in link</button>
+<button class="btn tiny" id="cloudSignOut" type="button">Sign out</button>
+</div>
+<div class="controls" style="margin:12px 0;flex-wrap:wrap">
+<button class="btn green" id="cloudRestore" type="button" disabled>Restore cloud account</button>
+<button class="btn" id="cloudUpload" type="button" disabled>Use this account · enable automatic saving</button>
+</div>
+<div id="cloudStatus" class="notice">Cloud not configured. Local paper trading and JSON backup remain available.</div>
+<p class="fine">On a new device, sign into the same Supabase project and email account and press Restore cloud account. Cloud updates happen after local paper-account changes, only while online and signed in. Cross-device concurrent edits can conflict: the app pauses rather than silently overwriting a different cloud revision.</p>
+</div><div class="section"><h2 style="font-size:15px;margin-top:0">Data and privacy</h2><div class="notice">No wallet keys, seeds or passwords. Paper account data is saved locally; optional authenticated Supabase cloud sync is available only after setup. Clearing site data or switching browsers removes your saved account. There is no hosted trading backend, alert service, or background trading. Auto IQ only runs when AUTO is ON and the browser is active; when OFF it does not scan or close positions. It never runs in background.</div><p class="fine">Feeds: <a target="_blank" rel="noopener noreferrer" href="https://apiguide.geckoterminal.com/">GeckoTerminal</a> and <a target="_blank" rel="noopener noreferrer" href="https://docs.dexscreener.com/api/reference">DEX Screener</a>. Best-effort reports: <a href="https://api.rugcheck.xyz/swagger/index.html" target="_blank" rel="noopener noreferrer">RugCheck API</a> · <a href="https://rugcheck.xyz/" target="_blank" rel="noopener noreferrer">RugCheck manual review</a>.</p></div></section>
 <footer class="footer">HYPER AI CRYPTO IQ BOT · Stage 3 autonomous paper simulation · New pool ≠ new token · No financial guarantees</footer>
 </main>
 <div id="modalBack" class="modal-back" role="presentation"><div class="modal" role="dialog" aria-modal="true" aria-labelledby="modalTitle"><h2 id="modalTitle">Open paper trade</h2><p class="fine" id="modalInfo"></p><div class="setting"><label for="tradeAmount">Virtual buy amount (USD)</label><input id="tradeAmount" class="field" type="number" min="2" step="0.01" value="5"></div><p class="fine" id="tradeLimit"></p><div class="danger-note">Simulation only. Third-party reports do not verify a token against every scam. Fees and slippage are estimates; simulated fills are not real executable quotes.</div><div class="actions"><button class="btn ghost" id="cancelTrade" type="button">Cancel</button><button class="btn green" id="confirmTrade" type="button">Paper BUY</button></div></div></div>
@@ -107,6 +127,7 @@ const STORAGE_KEY='hyper_crypto_iq_stage1_v1';
 const RECOVERY_KEY='hyper_crypto_iq_account_recovery_v1';
 const BACKUP_FORMAT='hyper-iq-paper-account-backup';
 let accountStorageState='Not yet checked';
+let cloudClient=null,cloudUser=null,cloudEnabled=false,cloudRemoteRevision=null,cloudTimer=null,cloudSaving=false,cloudDirty=false,cloudConfig=null;
 const API_G='https://api.geckoterminal.com/api/v2';
 const API_D='https://api.dexscreener.com';
 const REFRESH_MS=60000,MAX_POSITION_COUNT=5,FEE_RATE=.003,POOL_PAGES=4,SECURITY_TTL_MS=240000,SECURITY_AUTO_MAX=4;
@@ -166,6 +187,7 @@ function save(){
   showToast('SAVE FAILED. AUTO OFF. Download a backup; trades may not survive closing this page.');
  }
  renderPaperAccountStatus();
+ scheduleCloudSave();
 }
 function readRecoverySnapshot(){
  try{const raw=localStorage.getItem(RECOVERY_KEY);if(!raw)return null;const obj=JSON.parse(raw);return obj?.kind===BACKUP_FORMAT&&paperAccountValid(obj.account)?obj:null}catch{return null}
@@ -202,6 +224,153 @@ async function importPaperBackup(file){
 }
 function recoverLocalSnapshot(){const recovery=readRecoverySnapshot();if(!recovery){showToast('No valid browser recovery snapshot is available');return}restorePaperObject(recovery,'the browser recovery snapshot')}
 function save(){try{localStorage.setItem(STORAGE_KEY,JSON.stringify(account))}catch{showToast('Storage unavailable. Trades may disappear after closing the browser.')}}
+
+const CLOUD_PROJECT_KEY='hyper_iq_supabase_public_config_v1';
+const CLOUD_ENABLE_KEY='hyper_iq_supabase_autosync_';
+const CLOUD_TABLE='hyper_iq_paper_accounts';
+function setCloudStatus(s){const out=el('cloudStatus');if(out)out.textContent=s}
+function cloudVersion(s){return JSON.stringify({cash:s.cash,positions:s.positions,history:s.history,settings:s.settings,auto:{...s.auto,enabled:false},watch:s.watch})}
+function isCloudConfigured(){return !!cloudClient&&!!cloudUser}
+function cloudStateStatus(prefix=''){
+ setCloudStatus(prefix+(isCloudConfigured()?'Signed in '+String(cloudUser.email||cloudUser.id).slice(0,70)+'. '+(cloudEnabled?'Cloud automatic backup ON.':'Cloud automatic backup paused until you select a version.'):'Cloud disconnected. The local account is still available.')+' Keep independent JSON backups as well.');
+}
+function cloudSetButtons(){
+ const ok=isCloudConfigured();
+ for(const key of ['cloudRestore','cloudUpload','cloudSignOut'])el(key).disabled=!ok;
+}
+function cloudReadConfig(){
+ try{const x=JSON.parse(localStorage.getItem(CLOUD_PROJECT_KEY)||'null');return x&&typeof x.url==='string'&&typeof x.key==='string'?x:null}catch{return null}
+}
+async function connectCloud({quiet=false}={}){
+ const url=String(el('cloudUrl').value||'').trim(),key=String(el('cloudKey').value||'').trim();
+ if(!/^https:\/\/[a-z0-9-]+\.supabase\.co\/?$/i.test(url)){setCloudStatus('Enter your valid https://PROJECT.supabase.co URL.');return}
+ if(!key.startsWith('sb_publishable_')&&!key.startsWith('eyJ')){setCloudStatus('Only a publishable/legacy anon key is accepted. NEVER paste secret/service-role keys.');return}
+ if(!window.supabase?.createClient){setCloudStatus('Supabase library did not load. Check internet and reopen this page.');return}
+ cloudEnabled=false;cloudUser=null;cloudClient=null;cloudRemoteRevision=null;
+ try{
+  cloudClient=window.supabase.createClient(url.replace(/\/$/,''),key,{auth:{persistSession:true,autoRefreshToken:true,detectSessionInUrl:true}});
+  cloudConfig={url:url.replace(/\/$/,''),key};
+  localStorage.setItem(CLOUD_PROJECT_KEY,JSON.stringify(cloudConfig));
+  const {data,error}=await cloudClient.auth.getUser();
+  if(error&&error.status!==400)throw error;
+  cloudUser=data?.user||null;
+  cloudSetButtons();
+  if(cloudUser)await cloudReconcileOnStart();
+  else cloudStateStatus('Project saved. Enter your email and tap Email me sign-in link. ');
+ }catch(e){cloudEnabled=false;cloudSetButtons();setCloudStatus('Cannot connect project: '+String(e.message||e).slice(0,170))}
+}
+async function cloudSignIn(){
+ if(!cloudClient){setCloudStatus('First save a Supabase project and publishable key.');return}
+ const email=String(el('cloudEmail').value||'').trim();
+ if(!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)){setCloudStatus('Enter a valid email address.');return}
+ try{
+  const {error}=await cloudClient.auth.signInWithOtp({email,options:{emailRedirectTo:location.origin+location.pathname}});
+  if(error)throw error;
+  setCloudStatus('Sign-in link requested. Check the mailbox for '+email+', follow the link, return here, then check Cloud status. Supabase Auth must allow this GitHub Pages redirect.');
+ }catch(e){setCloudStatus('Email sign-in failed: '+String(e.message||e).slice(0,170))}
+}
+async function cloudSignOut(){
+ if(!cloudClient)return;
+ cloudEnabled=false;clearTimeout(cloudTimer);cloudDirty=false;
+ try{await cloudClient.auth.signOut()}catch{}
+ cloudUser=null;cloudRemoteRevision=null;cloudSetButtons();cloudStateStatus('Signed out. ')
+}
+async function fetchCloudRow(){
+ if(!isCloudConfigured())return null;
+ const {data,error}=await cloudClient.from(CLOUD_TABLE).select('state,updated_at').eq('user_id',cloudUser.id).maybeSingle();
+ if(error)throw error;
+ return data||null;
+}
+async function restoreCloudState({prompt=true}={}){
+ if(!isCloudConfigured())return;
+ try{
+  const remote=await fetchCloudRow();
+  if(!remote||!paperAccountValid(remote.state)){setCloudStatus('No valid cloud account exists yet. Use this account and enable automatic saving first.');return false}
+  if(prompt&&!confirm('Restore cloud account: '+remote.state.positions.length+' virtual positions, '+remote.state.history.length+' history records? This replaces the currently displayed paper account. AUTO stays OFF.'))return false;
+  cloudEnabled=false;clearTimeout(cloudTimer);cloudDirty=false;
+  account=hydratePaperAccount(remote.state);account.auto.enabled=false;
+  cloudRemoteRevision=remote.updated_at;
+  const oldCloud=cloudEnabled;cloudEnabled=false;
+  save();applySettingsUI();applyAutoUI();draw();
+  cloudEnabled=oldCloud||true;
+  try{localStorage.setItem(CLOUD_ENABLE_KEY+cloudUser.id,'yes')}catch{}
+  cloudStateStatus('Cloud account restored safely. ');
+  return true;
+ }catch(e){setCloudStatus('Cloud restore failed: '+String(e.message||e).slice(0,170));return false}
+}
+async function cloudReconcileOnStart(){
+ cloudEnabled=false;
+ const autoOptIn=localStorage.getItem(CLOUD_ENABLE_KEY+cloudUser.id)==='yes';
+ if(!autoOptIn){cloudStateStatus('Sign-in verified. Choose Restore cloud or Use this account. ');return}
+ try{
+  const remote=await fetchCloudRow();
+  if(!remote||!paperAccountValid(remote.state)){cloudStateStatus('Cloud record not found. Choose an account version manually. ');return}
+  cloudRemoteRevision=remote.updated_at;
+  if(cloudVersion(account)===cloudVersion(remote.state)){
+   cloudEnabled=true;cloudStateStatus('Cloud and local account match. ');return
+  }
+  if(account.positions.length===0&&account.history.length===0){
+   await restoreCloudState({prompt:false});return;
+  }
+  cloudEnabled=false;
+  setCloudStatus('PAPER ACCOUNT CONFLICT: local and cloud contain different trades or settings. AUTO cloud sync paused. Choose Restore cloud or Use this account; neither is overwritten automatically.');
+ }catch(e){setCloudStatus('Cloud unavailable: '+String(e.message||e).slice(0,170)+'. Local data remains available.')}
+}
+async function uploadLocalCloud(){
+ if(!isCloudConfigured())return;
+ try{
+  const remote=await fetchCloudRow();
+  if(remote&&!confirm('Cloud already contains '+(remote.state?.history?.length||0)+' trade history records. Replace that cloud account with this device\'s '+account.history.length+' records and enable automatic cloud saving?'))return;
+  if(!remote&&!confirm('Create your private cloud paper account with '+account.positions.length+' current positions and '+account.history.length+' history records?'))return;
+  const toSave={...account,auto:{...account.auto,enabled:false}};
+  const now=new Date().toISOString();
+  const {data,error}=await cloudClient.from(CLOUD_TABLE).upsert({user_id:cloudUser.id,state:toSave,updated_at:now},{onConflict:'user_id'}).select('updated_at').single();
+  if(error)throw error;
+  cloudRemoteRevision=data.updated_at;cloudEnabled=true;
+  try{localStorage.setItem(CLOUD_ENABLE_KEY+cloudUser.id,'yes')}catch{}
+  cloudStateStatus('Cloud account saved. Automatic backup ON. ');
+ }catch(e){cloudEnabled=false;setCloudStatus('Cloud save failed: '+String(e.message||e).slice(0,170))}
+}
+function scheduleCloudSave(){
+ if(!cloudEnabled||!isCloudConfigured())return;
+ cloudDirty=true;
+ clearTimeout(cloudTimer);
+ cloudTimer=setTimeout(()=>void flushCloudSave(),2500);
+}
+async function flushCloudSave(){
+ if(!cloudEnabled||!isCloudConfigured()||cloudSaving||!cloudDirty)return;
+ cloudSaving=true;cloudDirty=false;
+ try{
+  // Compare server revision to avoid unintentional overwrites after another device saved.
+  const old=await fetchCloudRow();
+  if(!old||old.updated_at!==cloudRemoteRevision){
+   cloudEnabled=false;
+   setCloudStatus('CONFLICT: cloud was modified by another device. Cloud autosaving paused. Restore or choose which copy to keep; local trades remain untouched.');
+   return;
+  }
+  const snapshot={...account,auto:{...account.auto,enabled:false}};
+  const {data,error}=await cloudClient.from(CLOUD_TABLE).update({state:snapshot,updated_at:new Date().toISOString()}).eq('user_id',cloudUser.id).eq('updated_at',cloudRemoteRevision).select('updated_at').maybeSingle();
+  if(error)throw error;
+  if(!data){
+   cloudEnabled=false;setCloudStatus('CONFLICT: cloud changed during save. Autosaving paused; local trades retained.');return;
+  }
+  cloudRemoteRevision=data.updated_at;
+  cloudStateStatus('Cloud saved '+new Date().toLocaleTimeString()+'. ');
+ }catch(e){
+  cloudDirty=true;
+  setCloudStatus('Cloud save pending/error: '+String(e.message||e).slice(0,160)+'. Data is retained locally; retry with an active internet connection.');
+ }finally{cloudSaving=false;if(cloudDirty&&cloudEnabled)cloudTimer=setTimeout(()=>void flushCloudSave(),10000)}
+}
+function wireCloud(){
+ el('cloudConnect').addEventListener('click',()=>void connectCloud());
+ el('cloudSignIn').addEventListener('click',()=>void cloudSignIn());
+ el('cloudSignOut').addEventListener('click',()=>void cloudSignOut());
+ el('cloudRestore').addEventListener('click',()=>void restoreCloudState());
+ el('cloudUpload').addEventListener('click',()=>void uploadLocalCloud());
+ const cfg=cloudReadConfig();
+ if(cfg){el('cloudUrl').value=cfg.url;el('cloudKey').value=cfg.key;void connectCloud({quiet:true})}
+ else setCloudStatus('Cloud is not configured. Create a Supabase project using CLOUD_SETUP.md first; keep using local paper trading and JSON backups meanwhile.');
+}
 function eventLog(message){account.events.unshift({at:Date.now(),message});account.events=account.events.slice(0,18);save();renderEvents()}
 function showToast(message){let box=el('toast');box.textContent=message;box.style.display='block';clearTimeout(showToast.timer);showToast.timer=setTimeout(()=>box.style.display='none',4300)}
 async function jsonFetch(url){const ctrl=new AbortController(),timer=setTimeout(()=>ctrl.abort(),13000);try{const res=await fetch(url,{headers:{Accept:'application/json'},signal:ctrl.signal,cache:'no-store'});if(!res.ok)throw Error('HTTP '+res.status+(res.status===429?' (API rate limit)':''));return await res.json()}finally{clearTimeout(timer)}}
@@ -571,7 +740,7 @@ el('recoverLocalAccount').addEventListener('click',recoverLocalSnapshot);el('tok
  for(const id of ['autoModeToggle','autoModeTogglePanel'])el(id).addEventListener('click',toggleAutoMode);
  el('autoCycle').addEventListener('click',()=>void refresh());
  el('exportButton').addEventListener('click',exportCSV);el('selfTest').addEventListener('click',mathOnlyTest)}
-function init(){wire();applySettingsUI();applyAutoUI();draw();el('clock').textContent=timeText(Date.now());setInterval(()=>{el('clock').textContent=timeText(Date.now());if(feedTime&&Date.now()-feedTime>180000&&sourceMode!=='sample'){status('FEED STALE','fail')}if(tab==='portfolio')renderPositions();if(tab==='auto')drawAuto()},10000);setInterval(()=>{if(account.auto.enabled&&!document.hidden)void refresh()},REFRESH_MS);el('feedInfo').textContent='AUTO OFF · Tap Refresh to load live market data manually.'}
+function init(){wire();wireCloud();applySettingsUI();applyAutoUI();draw();el('clock').textContent=timeText(Date.now());setInterval(()=>{el('clock').textContent=timeText(Date.now());if(feedTime&&Date.now()-feedTime>180000&&sourceMode!=='sample'){status('FEED STALE','fail')}if(tab==='portfolio')renderPositions();if(tab==='auto')drawAuto()},10000);setInterval(()=>{if(account.auto.enabled&&!document.hidden)void refresh()},REFRESH_MS);el('feedInfo').textContent='AUTO OFF · Tap Refresh to load live market data manually.'}
 init();
 
 
