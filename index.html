@@ -114,7 +114,7 @@ const STABLE_SYMBOLS=new Set(['SOL','WSOL','USDC','USDT','USDS','WETH','WBTC','J
 const defaults={liquidity:10000,volume:1000,minAge:5,maxAge:24,minTrades:10,maxPump:100,allocation:5,slippage:1.0,stop:15,take:30};
 const autoDefaults={enabled:false,maxPositions:3,minScore:76,partialAt:20,partialSize:50,trail:12,maxHours:72,dailyLoss:5,day:'',dayEquity:100,lastEntries:{}};
 const fresh=()=>({cash:100,positions:[],history:[],watch:[],settings:{...defaults},auto:{...autoDefaults},events:[]});
-let account=loadAccount(),tokens=[],sourceName='GeckoTerminal',sourceMode='none',feedTime=0,fetchBusy=false,preview=false,selectedToken=null,lastError='';
+let account=null,tokens=[],sourceName='GeckoTerminal',sourceMode='none',feedTime=0,fetchBusy=false,preview=false,selectedToken=null,lastError='';
 let tab='scanner',securityCache=new Map(),securityPausedUntil=0,securityBusy=new Set(),autoBusy=false,heldQuoteTask=null;
 const el=id=>document.getElementById(id);
 const n=v=>Number.isFinite(Number(v))?Number(v):NaN;
@@ -146,6 +146,8 @@ function loadAccount(){
   return hydratePaperAccount(s);
  }catch(e){accountStorageState='Unable to read saved account ('+String(e.message||e).slice(0,90)+')';return fresh()}
 }
+// Hydrate after value helpers initialize: imported account validation uses them.
+account=loadAccount();
 function save(){
  try{
   const encoded=JSON.stringify(account);
